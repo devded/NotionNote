@@ -1,0 +1,41 @@
+/* Theme: Kami — based on tw93/kami. Warm parchment canvas #f5f4ed,
+   ink blue #1b365d as the sole accent, serif carries hierarchy,
+   warm grays with a yellow-brown undertone, no hard shadows. */
+.kami {
+    --background: #f5f4ed;
+    --foreground: #35322b;
+    --card: #faf9f2;
+    --card-foreground: #35322b;
+    --popover: #faf9f2;
+    --popover-foreground: #35322b;
+    --primary: #1b365d;
+    --primary-foreground: #f5f4ed;
+    --secondary: #eceadd;
+    --secondary-foreground: #35322b;
+    --muted: #edebe0;
+    --muted-foreground: #837c6c;
+    --accent: #e7e4d6;
+    --accent-foreground: #1b365d;
+    --destructive: oklch(0.55 0.19 25);
+    --border: rgb(27 54 93 / 12%);
+    --input: rgb(27 54 93 / 18%);
+    --ring: rgb(27 54 93 / 45%);
+    --chart-1: #1b365d;
+    --chart-2: #8a8264;
+    --chart-3: #a89f83;
+    --chart-4: #c4bda4;
+    --chart-5: #ddd7c2;
+    --sidebar: #efeee3;
+    --sidebar-foreground: #35322b;
+    --sidebar-primary: #1b365d;
+    --sidebar-primary-foreground: #f5f4ed;
+    --sidebar-accent: #e7e4d6;
+    --sidebar-accent-foreground: #1b365d;
+    --sidebar-border: rgb(27 54 93 / 10%);
+    --sidebar-ring: rgb(27 54 93 / 45%);
+
+    /* Serif carries hierarchy — swap UI + prose fonts with the theme. */
+    --font-sans: "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia,
+        "Songti SC", "Noto Serif CJK SC", serif;
+    --font-heading: var(--font-sans);
+}

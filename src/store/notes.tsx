@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppConfig, Note, PersistedNotes, SyncStatus } from "@/types/note";
+import type { AppConfig, Note, PersistedNotes, SyncStatus, ThemeMode } from "@/types/note";
 import { ensureDatabase } from "@/services/notion/database";
 import {
   fetchNotes,
@@ -42,8 +42,8 @@ interface NotesStore {
   disconnect(): Promise<void>;
   clearCache(): Promise<void>;
   testConnection(): Promise<void>;
-  setTheme(theme: "system" | "light" | "dark"): void;
-  theme: "system" | "light" | "dark";
+  setTheme(theme: ThemeMode): void;
+  theme: ThemeMode;
 }
 
 const Ctx = createContext<NotesStore | null>(null);
@@ -72,7 +72,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [online, setOnline] = useState(navigator.onLine);
   const [globalSync, setGlobalSync] = useState<GlobalSyncState>("idle");
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
-  const [theme, setThemeState] = useState<"system" | "light" | "dark">("system");
+  const [theme, setThemeState] = useState<ThemeMode>("system");
 
   // Mutable mirror so the sync engine always sees fresh data.
   const storeRef = useRef<PersistedNotes>(emptyPersisted);
@@ -425,7 +425,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [theme]);
 
   const setTheme = useCallback(
-    (t: "system" | "light" | "dark") => {
+    (t: ThemeMode) => {
       setThemeState(t);
       void invoke("save_config", {
         config: JSON.parse(
