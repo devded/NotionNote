@@ -36,3 +36,7 @@ src-tauri/gen/schemas/
 
 # Local notes cache (may contain personal data)
 notes.json
+
+# Locally installed agent skills (not part of the app)
+.agents/
+.claude/
