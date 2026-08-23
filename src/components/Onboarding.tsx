@@ -64,10 +64,13 @@ export function Onboarding({ onConnected }: { onConnected: () => void }) {
   return (
     <div className="flex h-screen items-center justify-center bg-background">
       <form onSubmit={handleConnect} className="w-full max-w-sm px-6">
-        <h1 className="text-center text-lg font-semibold tracking-tight">Notes</h1>
-        <p className="mt-1 mb-8 text-center text-sm text-muted-foreground">
-          Connect your Notion workspace
-        </p>
+        <div className="mb-6 flex flex-col items-center justify-center">
+          <img src="/monolog-logo.svg" alt="Monolog" className="mb-3 size-12" />
+          <h1 className="text-center text-xl font-bold tracking-tight">Monolog</h1>
+          <p className="mt-1 text-center text-sm text-muted-foreground">
+            Connect your Notion workspace
+          </p>
+        </div>
 
         <label className="mb-1.5 block text-sm font-medium">Notion API Key</label>
         <Input

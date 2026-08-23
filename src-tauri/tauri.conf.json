@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "random-notes-desktop",
+  "productName": "Monolog",
   "version": "0.1.0",
-  "identifier": "com.randomnotes.desktop",
+  "identifier": "com.monolog.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Notes",
+        "title": "Monolog",
         "width": 1080,
         "height": 720,
         "minWidth": 640,

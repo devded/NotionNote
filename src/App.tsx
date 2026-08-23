@@ -12,7 +12,7 @@ import { NoteEditor } from "@/components/NoteEditor";
 import { DeleteNoteDialog } from "@/components/DeleteNoteDialog";
 import { SettingsDialog } from "@/components/Settings";
 import { Onboarding } from "@/components/Onboarding";
-import { SyncStatusBar } from "@/components/SyncStatus";
+import { SyncButton } from "@/components/SyncStatus";
 import { useNotes } from "@/store/notes";
 import { useShortcuts } from "@/hooks/useShortcuts";
 import type { Note } from "@/types/note";
@@ -31,6 +31,10 @@ export default function App() {
   useShortcuts({
     newNote: () => store.createNote(),
     save: () => store.flushSave(),
+    sync: () => {
+      store.flushSave();
+      void store.syncNow();
+    },
     focusSearch: () => searchRef.current?.focus(),
   });
 
@@ -66,11 +70,14 @@ export default function App() {
     <TooltipProvider delayDuration={300}>
       <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
         <header className="flex h-11 shrink-0 items-center justify-between border-b px-3">
-          <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            Notes
-          </span>
-          <SyncStatusBar />
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
+            <img src="/monolog-logo.svg" alt="Monolog" className="size-4.5 rounded" />
+            <span className="text-xs font-semibold tracking-wide text-foreground uppercase">
+              Monolog
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <SyncButton />
             <Button variant="ghost" size="sm" onClick={() => store.createNote()}>
               + New Note
             </Button>
@@ -105,7 +112,11 @@ export default function App() {
           />
 
           <main className="flex min-w-0 flex-1 flex-col">
-            <NoteEditor note={selected} onDeleteRequest={setDeleteTarget} />
+            <NoteEditor
+              key={selected?.id ?? "none"}
+              note={selected}
+              onDeleteRequest={setDeleteTarget}
+            />
           </main>
         </div>
       </div>

@@ -1,6 +1,5 @@
 import { forwardRef } from "react";
-import { Plus, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,7 +16,7 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar
   { searchRef },
   ref,
 ) {
-  const { notes, query, setQuery, select, selectedId, createNote } = useNotes();
+  const { notes, query, setQuery, select, selectedId } = useNotes();
 
   const filtered = notes.filter((n) => {
     if (!query.trim()) return true;
@@ -41,15 +40,7 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar
 
   return (
     <div ref={ref} className="flex h-full min-w-0 flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <h1 className="text-sm font-semibold tracking-tight">Notes</h1>
-        <Button variant="ghost" size="sm" onClick={createNote} title="New note (⌘N)">
-          <Plus className="size-4" />
-          New Note
-        </Button>
-      </div>
-
-      <div className="px-3 pb-2">
+      <div className="p-3 pb-2">
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
