@@ -1,5 +1,7 @@
-import { AlertTriangle, Check, CircleX, RefreshCw } from "lucide-react";
+import { AlertTriangle, CircleX, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { toast } from "sonner";
 import type { SyncStatus } from "@/types/note";
 import { useNotes } from "@/store/notes";
 import { formatRelative } from "@/lib/format";
@@ -17,37 +19,60 @@ export function NoteStatusIcon({ status }: { status: SyncStatus }) {
   return null; // synced: no icon keeps the list quiet
 }
 
-export function SyncStatusBar() {
-  const { globalSync, online, lastSyncAt, flushSave, notes } = useNotes();
+export function SyncButton() {
+  const { globalSync, online, lastSyncAt, flushSave, syncNow, notes } = useNotes();
 
+  const isSyncing = globalSync === "syncing";
   const pendingCount = notes.filter((n) => n.sync_status !== "synced").length;
 
-  let label = lastSyncAt ? `Synced ${formatRelative(lastSyncAt)}` : "Synced";
-  let icon = <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />;
+  const handleSync = async () => {
+    if (!online || isSyncing) return;
+    flushSave();
+    toast.loading("Syncing with Notion…", { id: "sync-action" });
+    try {
+      await syncNow();
+      toast.success("Notion sync complete", { id: "sync-action" });
+    } catch {
+      toast.error("Sync failed. Check your connection or API key.", { id: "sync-action" });
+    }
+  };
+
+  let icon = (
+    <RefreshCw
+      className={`size-3.5 ${
+        isSyncing ? "animate-spin text-primary" : "text-muted-foreground"
+      }`}
+    />
+  );
+  let label = isSyncing ? "Syncing…" : "Sync";
 
   if (!online || globalSync === "offline") {
-    label = pendingCount > 0 ? `Saved locally · ${pendingCount} waiting` : "Offline";
     icon = <AlertTriangle className="size-3.5 text-amber-600 dark:text-amber-400" />;
-  } else if (globalSync === "syncing") {
-    label = "Syncing…";
-    icon = <RefreshCw className="size-3.5 animate-spin text-muted-foreground" />;
+    label = pendingCount > 0 ? `${pendingCount} waiting` : "Offline";
   } else if (globalSync === "error") {
-    label = pendingCount > 0 ? "Sync failed — retrying" : "Sync error";
     icon = <CircleX className="size-3.5 text-destructive" />;
+    label = "Retry Sync";
   }
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
-          onClick={flushSave}
-          className="flex items-center gap-1.5 rounded px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!online || isSyncing}
+          onClick={handleSync}
+          className="h-7 gap-1.5 px-2.5 text-xs font-medium"
         >
           {icon}
-          {label}
-        </button>
+          <span>{label}</span>
+        </Button>
       </TooltipTrigger>
-      <TooltipContent side="top">Last sync: {lastSyncAt ? formatRelative(lastSyncAt) : "never"}</TooltipContent>
+      <TooltipContent side="bottom">
+        {lastSyncAt
+          ? `Last synced: ${formatRelative(lastSyncAt)} · Click to sync (⌘R / F5)`
+          : "Sync all notes with Notion (⌘R / F5)"}
+      </TooltipContent>
     </Tooltip>
   );
 }

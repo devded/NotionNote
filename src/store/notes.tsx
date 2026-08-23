@@ -36,6 +36,7 @@ interface NotesStore {
   updateNote(id: string, patch: Partial<Pick<Note, "title" | "content">>): void;
   deleteNote(id: string): void;
   flushSave(): void;
+  syncNow(): Promise<void>;
 
   /** Run the ensure-database flow and persist the result. */
   connect(apiKey: string, dbName: string): Promise<{ existed: boolean }>;
@@ -97,15 +98,22 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }, 400);
   }, [persistNow]);
 
+  const scheduleSync = useCallback((delay = 1200) => {
+    if (syncTimer.current) window.clearTimeout(syncTimer.current);
+    syncTimer.current = window.setTimeout(() => {
+      syncTimer.current = null;
+      void runSync();
+    }, delay);
+  }, []);
+
   const mutate = useCallback(
     (fn: (p: PersistedNotes) => PersistedNotes) => {
       const next = fn(storeRef.current);
       applyPersisted(next);
       scheduleSave();
-      scheduleSync();
+      scheduleSync(1200);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [applyPersisted, scheduleSave],
+    [applyPersisted, scheduleSave, scheduleSync],
   );
 
   // ------------------------------------------------------------------ sync
@@ -120,73 +128,171 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setGlobalSync("syncing");
     let hadError = false;
     try {
-      const now = new Date().toISOString();
-      const p = storeRef.current;
-
-      // Push pending deletes.
-      for (const pageId of p.pendingDeletes) {
+      // 1. Process pending deletes in Notion
+      const remainingPendingDeletes: string[] = [];
+      for (const pageId of storeRef.current.pendingDeletes) {
         try {
           await pushDeleteNote(pageId);
         } catch (e: any) {
           if (e?.code === "http_404" || e?.code === "not_found") continue; // already gone
+          remainingPendingDeletes.push(pageId);
           throw e;
         }
       }
 
-      // Push pending creates/updates.
-      for (const note of p.notes) {
-        if (note.sync_status !== "pending") continue;
-        if (!note.notion_page_id) {
-          const pageId = await pushCreateNote(cfg.data_source_id, note);
-          note.notion_page_id = pageId;
-        } else {
-          await pushUpdateNote(note);
+      // 2. Snapshot pending notes before network calls to detect subsequent typing
+      const pendingSnapshots = new Map<
+        string,
+        { title: string; content: string }
+      >();
+      for (const n of storeRef.current.notes) {
+        if (n.sync_status === "pending") {
+          pendingSnapshots.set(n.id, { title: n.title, content: n.content });
         }
-        note.sync_status = "synced";
-        note.last_synced_at = now;
       }
 
-      // Pull remote changes and merge.
+      // 3. Fetch remote notes from Notion
       const known = new Map(
-        p.notes.map((n) => [n.notion_page_id ?? n.id, n.last_synced_at] as const),
+        storeRef.current.notes
+          .filter((n) => n.notion_page_id && n.sync_status !== "pending")
+          .map((n) => [n.notion_page_id!, n.last_synced_at] as const),
       );
       const remote = await fetchNotes(cfg.data_source_id, known);
-      const byPageId = new Map(p.notes.map((n) => [n.notion_page_id ?? n.id, n]));
+
+      // 4. Push pending notes to Notion
+      const pushResults = new Map<
+        string,
+        {
+          lastEditedTime: string;
+          pageId?: string;
+          snapshot: { title: string; content: string };
+        }
+      >();
+
+      for (const [noteId, snapshot] of pendingSnapshots.entries()) {
+        const currentLocal = storeRef.current.notes.find((n) => n.id === noteId);
+        if (!currentLocal) continue;
+
+        if (!currentLocal.notion_page_id) {
+          const res = await pushCreateNote(cfg.data_source_id, currentLocal);
+          pushResults.set(noteId, {
+            lastEditedTime: res.lastEditedTime,
+            pageId: res.pageId,
+            snapshot,
+          });
+        } else {
+          const res = await pushUpdateNote(currentLocal);
+          pushResults.set(noteId, {
+            lastEditedTime: res.lastEditedTime,
+            pageId: currentLocal.notion_page_id,
+            snapshot,
+          });
+        }
+      }
+
+      // 5. Merge remote notes with freshest storeRef.current
+      const fresh = storeRef.current;
       const merged: Note[] = [];
+      let hasMorePending = false;
+
       for (const r of remote) {
-        const local = byPageId.get(r.id);
+        const local = fresh.notes.find(
+          (n) => (n.notion_page_id && n.notion_page_id === r.id) || n.id === r.id,
+        );
+
         if (!local) {
+          // Newly created note on Notion
           merged.push(r);
           continue;
         }
-        if (local.sync_status === "pending" && local.last_synced_at) {
-          const remoteNewer =
-            new Date(r.updated_at).getTime() >
-            new Date(local.last_synced_at).getTime() + 1000;
-          if (remoteNewer) {
-            // Conflict: keep local (never silently lose local edits).
-            console.warn("[sync] conflict on", local.id, "- keeping local version");
+
+        const pushInfo = pushResults.get(local.id);
+        if (pushInfo) {
+          // Check if user continued typing while push was running
+          const userTypedDuringPush =
+            local.title !== pushInfo.snapshot.title ||
+            local.content !== pushInfo.snapshot.content;
+
+          if (userTypedDuringPush) {
+            hasMorePending = true;
+            merged.push({
+              ...local,
+              notion_page_id: pushInfo.pageId ?? local.notion_page_id,
+              sync_status: "pending",
+            });
+          } else {
+            merged.push({
+              ...local,
+              notion_page_id: pushInfo.pageId ?? local.notion_page_id,
+              sync_status: "synced",
+              last_synced_at: pushInfo.lastEditedTime,
+              updated_at: pushInfo.lastEditedTime,
+            });
+          }
+        } else if (local.sync_status === "pending") {
+          // Local note was modified locally after snapshots were taken
+          hasMorePending = true;
+          merged.push(local);
+        } else {
+          // Local was synced; remote is authoritative
+          const content =
+            r.content !== undefined && r.content !== null && r.content !== ""
+              ? r.content
+              : (r.content === "" ? "" : local.content);
+          merged.push({
+            ...local,
+            ...r,
+            content,
+            sync_status: "synced",
+          });
+        }
+      }
+
+      // 6. Include any newly created local notes not yet in Notion remote query
+      for (const local of fresh.notes) {
+        const alreadyMerged = merged.some(
+          (m) =>
+            m.id === local.id ||
+            (m.notion_page_id && m.notion_page_id === local.notion_page_id),
+        );
+        if (!alreadyMerged) {
+          const pushInfo = pushResults.get(local.id);
+          if (pushInfo) {
+            const userTypedDuringPush =
+              local.title !== pushInfo.snapshot.title ||
+              local.content !== pushInfo.snapshot.content;
+            if (userTypedDuringPush) hasMorePending = true;
+
+            merged.unshift({
+              ...local,
+              notion_page_id: pushInfo.pageId ?? local.notion_page_id,
+              sync_status: userTypedDuringPush ? "pending" : "synced",
+              last_synced_at: pushInfo.lastEditedTime,
+              updated_at: pushInfo.lastEditedTime,
+            });
+          } else {
+            if (local.sync_status === "pending") hasMorePending = true;
+            merged.unshift(local);
           }
         }
-        // Unchanged pages skip the body re-read; keep local content for them.
-        merged.push(
-          local.sync_status === "pending"
-            ? local
-            : { ...r, content: r.content || local.content },
-        );
       }
-      // Local-only unsynced notes stay at the end.
-      for (const n of p.notes) {
-        if (n.sync_status === "pending" && !merged.includes(n)) merged.push(n);
-      }
+
+      // Sort newest updated first
+      merged.sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+      );
 
       applyPersisted({
         version: 1,
         notes: merged,
-        pendingDeletes: [],
+        pendingDeletes: remainingPendingDeletes,
       });
       await persistNow();
       setLastSyncAt(new Date().toISOString());
+
+      if (hasMorePending) {
+        scheduleSync(1200);
+      }
     } catch (e: any) {
       console.debug("[sync] failed:", e?.message ?? e);
       hadError = true;
@@ -204,16 +310,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         ),
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyPersisted, persistNow]);
-
-  function scheduleSync(delay = 1200) {
-    if (syncTimer.current) window.clearTimeout(syncTimer.current);
-    syncTimer.current = window.setTimeout(() => {
-      syncTimer.current = null;
-      void runSync();
-    }, delay);
-  }
+  }, [applyPersisted, persistNow, scheduleSync]);
 
   // Keep refs in sync with state for use inside async engine.
   const configRef = useRef(config);
@@ -232,7 +329,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           savedTheme === "light" ||
           savedTheme === "dark" ||
           savedTheme === "system" ||
-          savedTheme === "kami"
+          savedTheme === "kami" ||
+          savedTheme === "herdr"
         ) {
           setThemeState(savedTheme as ThemeMode);
         }
@@ -243,7 +341,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           pendingDeletes: saved?.pendingDeletes ?? [],
         });
         if (saved?.notes?.length > 0) setSelectedId(saved.notes[0].id);
-        if (cfg.connected) scheduleSync(500);
+        if (cfg.connected) scheduleSync(300);
       } finally {
         setReady(true);
       }
@@ -251,34 +349,48 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Connectivity events.
+  // Connectivity, window focus & periodic sync events.
   useEffect(() => {
     const goOnline = () => {
       setOnline(true);
-      scheduleSync(300);
+      scheduleSync(100);
     };
     const goOffline = () => setOnline(false);
+    const onFocus = () => {
+      if (navigator.onLine && configRef.current.connected) {
+        scheduleSync(100);
+      }
+    };
+    const onVisibilityChange = () => {
+      if (
+        document.visibilityState === "visible" &&
+        navigator.onLine &&
+        configRef.current.connected
+      ) {
+        scheduleSync(100);
+      }
+    };
+
     window.addEventListener("online", goOnline);
     window.addEventListener("offline", goOffline);
-    // Periodic safety net for pending changes (no Notion polling when idle).
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    // Periodic sync polling to detect Notion edits in background
     const iv = window.setInterval(() => {
-      const p = storeRef.current;
-      if (
-        navigator.onLine &&
-        configRef.current.connected &&
-        (p.pendingDeletes.length > 0 ||
-          p.notes.some((n) => n.sync_status === "pending" || n.sync_status === "error"))
-      ) {
+      if (navigator.onLine && configRef.current.connected) {
         void runSync();
       }
     }, 15000);
+
     return () => {
       window.removeEventListener("online", goOnline);
       window.removeEventListener("offline", goOffline);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.clearInterval(iv);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [runSync, scheduleSync]);
 
   // ------------------------------------------------------------------ api
 
@@ -367,7 +479,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       await invoke("save_config", {
         config: JSON.parse(JSON.stringify({ ...next, theme })),
       });
-      // First pull.
+      // First pull from Notion
       const remote = await fetchNotes(result.dataSourceId);
       const existing = storeRef.current.notes;
       const byPageId = new Map(existing.map((n) => [n.notion_page_id ?? n.id, n]));
@@ -458,6 +570,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       updateNote,
       deleteNote,
       flushSave,
+      syncNow: runSync,
       connect,
       disconnect,
       clearCache,
@@ -465,9 +578,25 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setTheme,
     }),
     [
-      ready, config, persisted.notes, selectedId, query, online, globalSync, lastSyncAt,
-      theme, createNote, updateNote, deleteNote, flushSave, connect, disconnect,
-      clearCache, testConnection, setTheme,
+      ready,
+      config,
+      persisted.notes,
+      selectedId,
+      query,
+      online,
+      globalSync,
+      lastSyncAt,
+      theme,
+      createNote,
+      updateNote,
+      deleteNote,
+      flushSave,
+      runSync,
+      connect,
+      disconnect,
+      clearCache,
+      testConnection,
+      setTheme,
     ],
   );
 

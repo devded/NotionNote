@@ -5,18 +5,24 @@ function pageToNote(page: any): Note {
   const props = page.properties ?? {};
   const created =
     props["Created At"]?.date?.start ?? page.created_time ?? new Date().toISOString();
+  // page.last_edited_time is Notion's true system timestamp of the most recent change.
   const updated =
-    props["Updated At"]?.date?.start ?? page.last_edited_time ?? new Date().toISOString();
+    page.last_edited_time ?? props["Updated At"]?.date?.start ?? created;
+  const title =
+    richTextToPlain(props.Title?.title) ||
+    richTextToPlain(props.title?.title) ||
+    richTextToPlain(props.Name?.title) ||
+    "";
   return {
     id: page.id,
-    title: richTextToPlain(props.Title?.title),
-    // Property value is a fallback/preview; body blocks are the real content.
+    title,
+    // Property value holds complete text content as atomic fallback
     content: richTextToPlain(props.Content?.rich_text),
     created_at: created,
     updated_at: updated,
     sync_status: "synced",
     notion_page_id: page.id,
-    last_synced_at: new Date().toISOString(),
+    last_synced_at: page.last_edited_time ?? new Date().toISOString(),
   };
 }
 
@@ -28,8 +34,7 @@ function noteProperties(note: {
 }) {
   return {
     Title: { title: [{ type: "text", text: { content: note.title || "Untitled" } }] },
-    // Short preview only — the readable content lives in the page body.
-    Content: { rich_text: plainToRichText(note.content.slice(0, 2000)) },
+    Content: { rich_text: plainToRichText(note.content) },
     "Created At": { date: note.created_at ? { start: note.created_at } : null },
     "Updated At": { date: note.updated_at ? { start: note.updated_at } : null },
   };
@@ -52,15 +57,20 @@ export async function fetchNotes(
       if (page.archived || page.in_trash) continue;
       const note = pageToNote(page);
       const syncedAt = knownSynced?.get(page.id);
-      const editedExternally =
-        !syncedAt ||
-        new Date(page.last_edited_time).getTime() > new Date(syncedAt).getTime() + 1000;
+      const pageEditedTime = page.last_edited_time
+        ? new Date(page.last_edited_time).getTime()
+        : 0;
+      const syncedTime = syncedAt ? new Date(syncedAt).getTime() : 0;
+      const editedExternally = !syncedAt || pageEditedTime > syncedTime;
+
       if (editedExternally) {
         try {
           const body = await fetchPageContent(page.id);
-          if (body.trim()) note.content = body;
+          if (body && body.trim().length > 0) {
+            note.content = body;
+          }
         } catch (e) {
-          console.debug("[notion] failed to read page body, using property fallback");
+          console.debug("[notion] failed to read page body, using property fallback", e);
         }
       }
       notes.push(note);
@@ -110,10 +120,13 @@ async function fetchPageContent(pageId: string): Promise<string> {
       "GET",
       `/blocks/${pageId}/children?page_size=100${cursor ? `&start_cursor=${cursor}` : ""}`,
     );
-    lines.push(blocksToText(res?.results ?? []));
+    const chunk = blocksToText(res?.results ?? []);
+    if (chunk.length > 0) {
+      lines.push(chunk);
+    }
     cursor = res?.has_more ? res?.next_cursor ?? undefined : undefined;
   } while (cursor);
-  return lines.filter((l) => l.length > 0).join("\n");
+  return lines.join("\n");
 }
 
 /**
@@ -142,8 +155,9 @@ export function contentToBlocks(content: string): any[] {
   return blocks;
 }
 
-async function replacePageBlocks(pageId: string, content: string) {
-  // Remove existing children, then append fresh blocks (max 100/request).
+async function syncPageBlocks(pageId: string, content: string) {
+  // 1. Fetch old block IDs
+  const oldBlockIds: string[] = [];
   let cursor: string | undefined;
   do {
     const res: any = await notionRequest(
@@ -151,48 +165,74 @@ async function replacePageBlocks(pageId: string, content: string) {
       `/blocks/${pageId}/children?page_size=100${cursor ? `&start_cursor=${cursor}` : ""}`,
     );
     for (const b of res?.results ?? []) {
-      if (b.archived || b.in_trash) continue;
-      await notionRequest("DELETE", `/blocks/${b.id}`);
+      if (!b.archived && !b.in_trash) {
+        oldBlockIds.push(b.id);
+      }
     }
     cursor = res?.has_more ? res?.next_cursor ?? undefined : undefined;
   } while (cursor);
 
+  // 2. Append new blocks FIRST so the page is never empty
   const blocks = contentToBlocks(content);
-  for (let i = 0; i < blocks.length; i += 100) {
-    await notionRequest("PATCH", `/blocks/${pageId}/children`, {
-      children: blocks.slice(i, i + 100),
-    });
+  if (blocks.length > 0) {
+    for (let i = 0; i < blocks.length; i += 100) {
+      await notionRequest("PATCH", `/blocks/${pageId}/children`, {
+        children: blocks.slice(i, i + 100),
+      });
+    }
+  }
+
+  // 3. Delete old blocks cleanly
+  for (const oldId of oldBlockIds) {
+    try {
+      await notionRequest("DELETE", `/blocks/${oldId}`);
+    } catch {
+      // Ignore if block was already deleted
+    }
   }
 }
 
 /** Create a Notion page (properties + body blocks) for a local note. */
-export async function pushCreateNote(dataSourceId: string, note: Note): Promise<string> {
+export async function pushCreateNote(
+  dataSourceId: string,
+  note: Note,
+): Promise<{ pageId: string; lastEditedTime: string }> {
   const page = await notionRequest<any>("POST", "/pages", {
     parent: { type: "data_source_id", data_source_id: dataSourceId },
     properties: noteProperties(note),
   });
   const blocks = contentToBlocks(note.content);
   if (blocks.length > 0) {
-    await notionRequest("PATCH", `/blocks/${page.id}/children`, {
-      children: blocks.slice(0, 100),
-    });
-    for (let i = 100; i < blocks.length; i += 100) {
+    for (let i = 0; i < blocks.length; i += 100) {
       await notionRequest("PATCH", `/blocks/${page.id}/children`, {
         children: blocks.slice(i, i + 100),
       });
     }
   }
-  return page.id;
+  return {
+    pageId: page.id,
+    lastEditedTime: page.last_edited_time ?? new Date().toISOString(),
+  };
 }
 
 /** Update an existing Notion page (properties + rewritten body). */
-export async function pushUpdateNote(note: Note): Promise<void> {
-  await notionRequest("PATCH", `/pages/${note.notion_page_id}`, {
+export async function pushUpdateNote(
+  note: Note,
+): Promise<{ lastEditedTime: string }> {
+  // Atomic page property update ensures Title, Content, and Updated At are saved immediately
+  const page = await notionRequest<any>("PATCH", `/pages/${note.notion_page_id}`, {
     properties: noteProperties(note),
   });
   if (note.notion_page_id) {
-    await replacePageBlocks(note.notion_page_id, note.content);
+    try {
+      await syncPageBlocks(note.notion_page_id, note.content);
+    } catch (e) {
+      console.debug("[notion] error syncing page blocks:", e);
+    }
   }
+  return {
+    lastEditedTime: page?.last_edited_time ?? new Date().toISOString(),
+  };
 }
 
 /** Archive (soft delete) a Notion page. */

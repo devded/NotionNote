@@ -20,14 +20,17 @@ interface NoteEditorProps {
 
 export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
   const { updateNote } = useNotes();
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
+  const [title, setTitle] = useState(note?.title ?? "");
+  const [content, setContent] = useState(note?.content ?? "");
 
-  // Reflect the selected note into local state for fast typing.
+  // Update editor view when remote sync from Notion brings external updates
+  // (Only when note is in synced state, never interrupting local in-progress typing)
   useEffect(() => {
-    setTitle(note?.title ?? "");
-    setContent(note?.content ?? "");
-  }, [note?.id]);
+    if (note && note.sync_status === "synced") {
+      setTitle(note.title ?? "");
+      setContent(note.content ?? "");
+    }
+  }, [note?.updated_at, note?.sync_status]);
 
   if (!note) {
     return (
@@ -44,8 +47,9 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
           value={title}
           placeholder="Untitled"
           onChange={(e) => {
-            setTitle(e.target.value);
-            updateNote(note.id, { title: e.target.value });
+            const next = e.target.value;
+            setTitle(next);
+            updateNote(note.id, { title: next });
           }}
           className="note-title h-auto border-none bg-transparent px-0 text-2xl font-semibold tracking-tight shadow-none focus-visible:ring-0"
         />
@@ -74,8 +78,9 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
         value={content}
         placeholder="Write your note here…"
         onChange={(e) => {
-          setContent(e.target.value);
-          updateNote(note.id, { content: e.target.value });
+          const next = e.target.value;
+          setContent(next);
+          updateNote(note.id, { content: next });
         }}
         className="min-h-0 flex-1 resize-none border-none bg-transparent px-8 py-4 text-[15px] leading-relaxed shadow-none focus-visible:ring-0"
       />
