@@ -152,6 +152,8 @@ struct Config {
     data_source_id: Option<String>,
     #[serde(default)]
     connected: bool,
+    #[serde(default)]
+    theme: Option<String>,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {

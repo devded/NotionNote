@@ -228,8 +228,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         setConfig({ ...cfg });
         configRef.current = { ...cfg };
         const savedTheme = (cfg as any).theme as string | undefined;
-        if (savedTheme === "light" || savedTheme === "dark" || savedTheme === "system") {
-          setThemeState(savedTheme);
+        if (
+          savedTheme === "light" ||
+          savedTheme === "dark" ||
+          savedTheme === "system" ||
+          savedTheme === "kami"
+        ) {
+          setThemeState(savedTheme as ThemeMode);
         }
         const saved = (await invoke("load_notes")) as PersistedNotes;
         applyPersisted({

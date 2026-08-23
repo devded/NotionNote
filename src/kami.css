@@ -1,41 +1,248 @@
-/* Theme: Kami — based on tw93/kami. Warm parchment canvas #f5f4ed,
-   ink blue #1b365d as the sole accent, serif carries hierarchy,
-   warm grays with a yellow-brown undertone, no hard shadows. */
-.kami {
-    --background: #f5f4ed;
-    --foreground: #35322b;
-    --card: #faf9f2;
-    --card-foreground: #35322b;
-    --popover: #faf9f2;
-    --popover-foreground: #35322b;
-    --primary: #1b365d;
-    --primary-foreground: #f5f4ed;
-    --secondary: #eceadd;
-    --secondary-foreground: #35322b;
-    --muted: #edebe0;
-    --muted-foreground: #837c6c;
-    --accent: #e7e4d6;
-    --accent-foreground: #1b365d;
-    --destructive: oklch(0.55 0.19 25);
-    --border: rgb(27 54 93 / 12%);
-    --input: rgb(27 54 93 / 18%);
-    --ring: rgb(27 54 93 / 45%);
-    --chart-1: #1b365d;
-    --chart-2: #8a8264;
-    --chart-3: #a89f83;
-    --chart-4: #c4bda4;
-    --chart-5: #ddd7c2;
-    --sidebar: #efeee3;
-    --sidebar-foreground: #35322b;
-    --sidebar-primary: #1b365d;
-    --sidebar-primary-foreground: #f5f4ed;
-    --sidebar-accent: #e7e4d6;
-    --sidebar-accent-foreground: #1b365d;
-    --sidebar-border: rgb(27 54 93 / 10%);
-    --sidebar-ring: rgb(27 54 93 / 45%);
+/* ==========================================================================
+   Theme: Kami (紙) — Faithful Port of tw93/kami Design System
+   Parchment canvas (#f5f4ed), single ink-blue accent (#1B365D ≤ 5%),
+   warm gray scale (yellow-brown undertone), serif hierarchy, whisper depth.
+   ========================================================================== */
 
-    /* Serif carries hierarchy — swap UI + prose fonts with the theme. */
-    --font-sans: "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia,
-        "Songti SC", "Noto Serif CJK SC", serif;
-    --font-heading: var(--font-sans);
+/* Font declarations */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono.woff2") format("woff2");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "TsangerJinKai02";
+  src: url("/fonts/TsangerJinKai02-W04.ttf") format("truetype");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Kami CSS Variables & Tokens */
+.kami {
+  /* Surface Tokens */
+  --background: #f5f4ed;            /* Parchment — warm cream canvas */
+  --foreground: #141413;            /* Near Black — primary text */
+  --card: #faf9f5;                  /* Ivory — lifted surface / cards */
+  --card-foreground: #141413;
+  --popover: #faf9f5;               /* Ivory — dropdowns / modals */
+  --popover-foreground: #141413;
+
+  /* Brand & Accent Tokens */
+  --primary: #1b365d;               /* Ink Blue — single accent CTA */
+  --primary-foreground: #faf9f5;    /* Ivory text on brand buttons */
+  --secondary: #e8e6dc;             /* Warm Sand — interactive surface */
+  --secondary-foreground: #141413;
+  --muted: #eceade;                 /* Light warm neutral */
+  --muted-foreground: #504e49;      /* Olive — subtext / descriptions */
+  --accent: #e8e6dc;                /* Warm Sand */
+  --accent-foreground: #1b365d;     /* Ink Blue */
+  --destructive: #a83232;           /* Warm Brick Red */
+  --destructive-foreground: #faf9f5;
+
+  /* Border & Input Tokens */
+  --border: #e8e6dc;                /* Primary Border */
+  --border-soft: #e5e3d8;           /* Secondary Border / Hairline */
+  --input: #dcd9ca;                 /* Input hairline */
+  --ring: rgb(27 54 93 / 30%);      /* Focus ring */
+
+  /* Sidebar Tokens */
+  --sidebar: #f5f4ed;
+  --sidebar-foreground: #141413;
+  --sidebar-primary: #1b365d;
+  --sidebar-primary-foreground: #faf9f5;
+  --sidebar-accent: #e8e6dc;
+  --sidebar-accent-foreground: #1b365d;
+  --sidebar-border: #e5e3d8;
+  --sidebar-ring: rgb(27 54 93 / 30%);
+
+  /* Radius & Shadows */
+  --radius: 0.375rem;
+
+  /* Charts & Data */
+  --chart-1: #1b365d;
+  --chart-2: #504e49;
+  --chart-3: #6b6a64;
+  --chart-4: #b8b7b0;
+  --chart-5: #d4d3cd;
+
+  /* Custom Kami Design Tokens */
+  --kami-parchment: #f5f4ed;
+  --kami-ivory: #faf9f5;
+  --kami-warm-sand: #e8e6dc;
+  --kami-brand: #1b365d;
+  --kami-brand-light: #2d5a8a;
+  --kami-brand-tint: #eef2f7;
+  --kami-tag-bg: #e4ecf5;
+  --kami-near-black: #141413;
+  --kami-dark-warm: #3d3d3a;
+  --kami-olive: #504e49;
+  --kami-stone: #6b6a64;
+  --kami-border: #e8e6dc;
+  --kami-border-soft: #e5e3d8;
+
+  /* Typography Stacks: Serif carries hierarchy across the entire app */
+  --font-app: "Charter", "Bitstream Charter", "Source Serif 4", "Newsreader",
+    Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC",
+    "Songti SC", "STSong", Palatino, serif;
+  --font-sans: var(--font-app);
+  --font-heading: var(--font-app);
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", Consolas, Monaco, monospace;
+}
+
+/* ==========================================================================
+   Kami Editorial Polish & Refinements
+   ========================================================================== */
+
+/* Ink-blue selection highlight */
+.kami ::selection {
+  background-color: #e4ecf5;
+  color: #1b365d;
+}
+
+/* Ink-blue text caret */
+.kami input,
+.kami textarea {
+  caret-color: #1b365d;
+}
+
+/* Warm placeholder text */
+.kami input::placeholder,
+.kami textarea::placeholder {
+  color: #9c9789;
+}
+
+/* Editorial prose rhythm */
+.kami textarea {
+  line-height: 1.85;
+  font-size: 15.5px;
+  color: #141413;
+  letter-spacing: 0.01em;
+}
+
+/* Note Title: Clean dignified serif header */
+.kami .note-title {
+  font-family: var(--font-app);
+  font-weight: 500;
+  font-size: 1.75rem;
+  line-height: 1.25;
+  color: #141413;
+  letter-spacing: -0.01em;
+}
+
+/* Header & metadata tracking */
+.kami .tracking-wide,
+.kami header span {
+  letter-spacing: 0.1em;
+  font-weight: 500;
+  color: #6b6a64;
+}
+
+/* Sidebar styling */
+.kami .bg-sidebar {
+  background-color: #f5f4ed;
+}
+
+.kami .bg-sidebar button {
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Active note item in sidebar: ivory card lift with subtle brand left indicator */
+.kami .bg-sidebar button.bg-accent {
+  background-color: #faf9f5;
+  color: #141413;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(20, 19, 19, 0.04), inset 3px 0 0 #1b365d;
+}
+
+.kami .bg-sidebar button:not(.bg-accent):hover {
+  background-color: #eceade;
+  color: #141413;
+}
+
+/* Search input in sidebar */
+.kami .bg-sidebar input {
+  background-color: #faf9f5;
+  border-color: #e8e6dc;
+  color: #141413;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kami .bg-sidebar input:focus-visible {
+  border-color: #1b365d;
+  box-shadow: 0 0 0 2px rgb(27 54 93 / 15%);
+}
+
+/* Buttons in Kami */
+.kami button[data-variant="default"] {
+  background-color: #1b365d;
+  color: #faf9f5;
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(27, 54, 93, 0.12);
+}
+
+.kami button[data-variant="default"]:hover {
+  background-color: #152c4d;
+}
+
+.kami button[data-variant="secondary"] {
+  background-color: #e8e6dc;
+  color: #3d3d3a;
+  font-weight: 500;
+}
+
+.kami button[data-variant="secondary"]:hover {
+  background-color: #dedbcf;
+}
+
+.kami button[data-variant="ghost"]:hover {
+  background-color: #e8e6dc;
+  color: #141413;
+}
+
+.kami button[data-variant="outline"] {
+  border-color: #e8e6dc;
+  background-color: #faf9f5;
+  color: #141413;
+}
+
+.kami button[data-variant="outline"]:hover {
+  background-color: #e8e6dc;
+}
+
+/* Dialogs, Popovers & Select Menus */
+.kami [role="dialog"],
+.kami [data-slot="dialog-content"] {
+  background-color: #faf9f5;
+  border: 1px solid #e8e6dc;
+  box-shadow: 0 16px 40px rgba(20, 19, 19, 0.08);
+}
+
+.kami [data-slot="select-content"],
+.kami [data-slot="dropdown-menu-content"] {
+  background-color: #faf9f5;
+  border: 1px solid #e5e3d8;
+  box-shadow: 0 8px 24px rgba(20, 19, 19, 0.08);
+}
+
+/* Custom warm scrollbars */
+.kami *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.kami *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.kami *::-webkit-scrollbar-thumb {
+  background: #dcd9ca;
+  border-radius: 3px;
+}
+
+.kami *::-webkit-scrollbar-thumb:hover {
+  background: #c5c1b0;
 }

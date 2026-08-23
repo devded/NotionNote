@@ -47,7 +47,7 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
             setTitle(e.target.value);
             updateNote(note.id, { title: e.target.value });
           }}
-          className="h-auto border-none bg-transparent px-0 text-2xl font-semibold tracking-tight shadow-none focus-visible:ring-0"
+          className="note-title h-auto border-none bg-transparent px-0 text-2xl font-semibold tracking-tight shadow-none focus-visible:ring-0"
         />
         <Tooltip>
           <TooltipTrigger asChild>
