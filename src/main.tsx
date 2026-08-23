@@ -9,7 +9,7 @@ import "@/index.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem themes={["system", "light", "dark", "kami"]}>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem themes={["system", "light", "dark", "kami", "herdr"]}>
       <NotesProvider>
         <App />
         <ThemeBridge />

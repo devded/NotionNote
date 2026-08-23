@@ -1,0 +1,261 @@
+/* ==========================================================================
+   Theme: Herdr (Paper Light) — Faithful Port of herdr.dev Design System
+   Warm tactile paper canvas (#efece5), technical grid texture (#e4e0d6),
+   deep ink typography (#15140f), crisp hairlines (#cbc5b6 / #e2ded4),
+   spot accent (#8839ef), Archivo bold headings, Inter prose, JetBrains Mono.
+   ========================================================================== */
+
+.herdr {
+  /* Surface Tokens */
+  --background: #efece5;
+  --foreground: #15140f;
+  --card: #e7e3da;
+  --card-foreground: #15140f;
+  --popover: #f5f3ee;
+  --popover-foreground: #15140f;
+
+  /* Brand / Spot Accent */
+  --primary: #8839ef;
+  --primary-foreground: #ffffff;
+  --secondary: #ddd8cc;
+  --secondary-foreground: #15140f;
+  --muted: #e7e3da;
+  --muted-foreground: #55534a;
+  --accent: #ddd8cc;
+  --accent-foreground: #8839ef;
+  --destructive: #c73e3e;
+  --destructive-foreground: #ffffff;
+
+  /* Borders & Focus Rings */
+  --border: #cbc5b6;
+  --border-soft: #e2ded4;
+  --input: #cbc5b6;
+  --ring: rgb(136 57 239 / 35%);
+
+  /* Sidebar */
+  --sidebar: #e7e3da;
+  --sidebar-foreground: #15140f;
+  --sidebar-primary: #8839ef;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #ddd8cc;
+  --sidebar-accent-foreground: #8839ef;
+  --sidebar-border: #cbc5b6;
+  --sidebar-ring: rgb(136 57 239 / 35%);
+
+  /* Radius: Sharp & Technical */
+  --radius: 0.25rem;
+
+  /* Charts & Status Colors */
+  --chart-1: #8839ef;
+  --chart-2: #2aa198;
+  --chart-3: #5fae74;
+  --chart-4: #d3a027;
+  --chart-5: #55534a;
+
+  /* Herdr Specific Tokens */
+  --herdr-bg: #efece5;
+  --herdr-panel: #e7e3da;
+  --herdr-mass: #ddd8cc;
+  --herdr-ink: #15140f;
+  --herdr-dim: #55534a;
+  --herdr-faint: #86826f;
+  --herdr-line: #e2ded4;
+  --herdr-line2: #cbc5b6;
+  --herdr-spot: #8839ef;
+  --herdr-spot-ink: #ffffff;
+  --herdr-grid: #e4e0d6;
+
+  /* Typography */
+  --font-app: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: var(--font-app);
+  --font-heading: "Archivo", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ==========================================================================
+   Herdr Editorial & Industrial Polish
+   ========================================================================== */
+
+/* Technical background grid on paper canvas */
+.herdr .bg-background {
+  background-color: #efece5;
+  background-image:
+    linear-gradient(#e4e0d6 1px, transparent 1px),
+    linear-gradient(90deg, #e4e0d6 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* Vivid spot accent selection */
+.herdr ::selection {
+  background-color: #8839ef;
+  color: #ffffff;
+}
+
+/* Caret color */
+.herdr input,
+.herdr textarea {
+  caret-color: #8839ef;
+}
+
+/* Placeholder color */
+.herdr input::placeholder,
+.herdr textarea::placeholder {
+  color: #86826f;
+}
+
+/* Note title with bold Archivo typography */
+.herdr .note-title {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 1.85rem;
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+  color: #15140f;
+}
+
+/* Header bar styling */
+.herdr header {
+  background-color: #efece5;
+  border-bottom: 1px solid #cbc5b6;
+}
+
+.herdr header span,
+.herdr .tracking-wide {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #55534a;
+  text-transform: uppercase;
+}
+
+/* Sidebar styling */
+.herdr .bg-sidebar {
+  background-color: #e7e3da;
+  border-right: 1px solid #cbc5b6;
+}
+
+.herdr .bg-sidebar h1 {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #15140f;
+}
+
+.herdr .bg-sidebar input {
+  background-color: #efece5;
+  border: 1px solid #cbc5b6;
+  border-radius: 3px;
+  color: #15140f;
+  font-family: var(--font-sans);
+}
+
+.herdr .bg-sidebar input:focus-visible {
+  border-color: #8839ef;
+  box-shadow: 0 0 0 2px rgb(136 57 239 / 20%);
+}
+
+.herdr .bg-sidebar button {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  border-radius: 3px;
+}
+
+/* Active note item in sidebar */
+.herdr .bg-sidebar button.bg-accent {
+  background-color: #ddd8cc;
+  color: #15140f;
+  font-weight: 600;
+  border: 1px solid #cbc5b6;
+  border-left: 3px solid #8839ef;
+}
+
+.herdr .bg-sidebar button:not(.bg-accent):hover {
+  background-color: #ddd8cc;
+  color: #15140f;
+}
+
+/* Prose editor */
+.herdr textarea {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.75;
+  color: #15140f;
+}
+
+/* Action buttons */
+.herdr button[data-variant="default"] {
+  background-color: #8839ef;
+  color: #ffffff;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(136, 57, 239, 0.25);
+}
+
+.herdr button[data-variant="default"]:hover {
+  background-color: #772ce8;
+}
+
+.herdr button[data-variant="secondary"] {
+  background-color: #ddd8cc;
+  color: #15140f;
+  border: 1px solid #cbc5b6;
+  border-radius: 4px;
+}
+
+.herdr button[data-variant="secondary"]:hover {
+  background-color: #d1cbbe;
+}
+
+.herdr button[data-variant="outline"] {
+  background-color: #e7e3da;
+  border: 1px solid #cbc5b6;
+  color: #15140f;
+  border-radius: 4px;
+}
+
+.herdr button[data-variant="outline"]:hover {
+  background-color: #ddd8cc;
+}
+
+.herdr button[data-variant="ghost"]:hover {
+  background-color: #ddd8cc;
+  color: #15140f;
+}
+
+/* Dialogs, Popovers & Select Menus */
+.herdr [role="dialog"],
+.herdr [data-slot="dialog-content"] {
+  background-color: #efece5;
+  border: 1px solid #cbc5b6;
+  border-radius: 6px;
+  box-shadow: 0 12px 36px rgba(21, 20, 15, 0.12);
+}
+
+.herdr [data-slot="select-content"],
+.herdr [data-slot="dropdown-menu-content"] {
+  background-color: #f5f3ee;
+  border: 1px solid #cbc5b6;
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(21, 20, 15, 0.1);
+}
+
+/* Technical scrollbars */
+.herdr *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.herdr *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.herdr *::-webkit-scrollbar-thumb {
+  background: #cbc5b6;
+  border-radius: 2px;
+}
+
+.herdr *::-webkit-scrollbar-thumb:hover {
+  background: #b5ae9d;
+}

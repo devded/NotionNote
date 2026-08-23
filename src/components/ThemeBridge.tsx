@@ -8,7 +8,7 @@ export function ThemeBridge() {
   const { setTheme } = useTheme();
 
   useEffect(() => {
-    if (["system", "light", "dark", "kami"].includes(theme)) {
+    if (["system", "light", "dark", "kami", "herdr"].includes(theme)) {
       setTheme(theme);
     }
   }, [theme, setTheme]);
