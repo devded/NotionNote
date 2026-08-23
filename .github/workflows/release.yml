@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to build and release (e.g. v0.1.0)"
+        required: false
+        default: "v0.1.0"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -11,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write # required to create releases and upload release assets
 
 jobs:
   # ------------------------------------------------------------------ Linux
@@ -48,13 +56,13 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p dist-release
-          cp src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage dist-release/NotionNote-linux-x86_64.AppImage
-          cp src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb dist-release/NotionNote-linux-x86_64.deb
+          cp src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage dist-release/Monolog-linux-x86_64.AppImage
+          cp src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb dist-release/Monolog-linux-x86_64.deb
 
       - name: Validate artifacts
         run: |
-          test -f dist-release/NotionNote-linux-x86_64.AppImage || { echo "::error::AppImage missing"; exit 1; }
-          test -f dist-release/NotionNote-linux-x86_64.deb || { echo "::error::deb missing"; exit 1; }
+          test -f dist-release/Monolog-linux-x86_64.AppImage || { echo "::error::AppImage missing"; exit 1; }
+          test -f dist-release/Monolog-linux-x86_64.deb || { echo "::error::deb missing"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -95,11 +103,11 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p dist-release
-          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg dist-release/NotionNote-macos-arm64.dmg
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg dist-release/Monolog-macos-arm64.dmg
 
       - name: Validate artifacts
         run: |
-          test -f dist-release/NotionNote-macos-arm64.dmg || { echo "::error::dmg missing"; exit 1; }
+          test -f dist-release/Monolog-macos-arm64.dmg || { echo "::error::dmg missing"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -138,11 +146,11 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p dist-release
-          cp src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg dist-release/NotionNote-macos-x86_64.dmg
+          cp src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg dist-release/Monolog-macos-x86_64.dmg
 
       - name: Validate artifacts
         run: |
-          test -f dist-release/NotionNote-macos-x86_64.dmg || { echo "::error::dmg missing"; exit 1; }
+          test -f dist-release/Monolog-macos-x86_64.dmg || { echo "::error::dmg missing"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -183,14 +191,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist-release
-          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi dist-release/NotionNote-windows-x86_64.msi
-          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe dist-release/NotionNote-windows-x86_64.exe
+          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi dist-release/Monolog-windows-x86_64.msi
+          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe dist-release/Monolog-windows-x86_64.exe
 
       - name: Validate artifacts
         shell: bash
         run: |
-          test -f dist-release/NotionNote-windows-x86_64.msi || { echo "::error::msi missing"; exit 1; }
-          test -f dist-release/NotionNote-windows-x86_64.exe || { echo "::error::exe missing"; exit 1; }
+          test -f dist-release/Monolog-windows-x86_64.msi || { echo "::error::msi missing"; exit 1; }
+          test -f dist-release/Monolog-windows-x86_64.exe || { echo "::error::exe missing"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -213,17 +221,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Resolve Release Tag & Version
+        id: meta
+        run: |
+          RAW_TAG="${{ inputs.tag || github.event.release.tag_name || github.ref_name }}"
+          if [[ "$RAW_TAG" != v* ]]; then
+            TAG="v$RAW_TAG"
+          else
+            TAG="$RAW_TAG"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Verify tag matches tauri.conf.json version
         run: |
           CONF_VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          TAG_VERSION=${{ steps.version.outputs.version }}
-          if [ "$CONF_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::Tag v$TAG_VERSION does not match tauri.conf.json version $CONF_VERSION."
-            echo "Update src-tauri/tauri.conf.json (and Cargo.toml) before tagging."
+          TARGET_VERSION="${{ steps.meta.outputs.version }}"
+          if [ "$CONF_VERSION" != "$TARGET_VERSION" ]; then
+            echo "::error::Tag v$TARGET_VERSION does not match tauri.conf.json version $CONF_VERSION."
+            echo "Update src-tauri/tauri.conf.json (and Cargo.toml) before releasing."
             exit 1
           fi
 
@@ -236,21 +253,28 @@ jobs:
         run: |
           cd dist-release
           for f in \
-            NotionNote-linux-x86_64.AppImage \
-            NotionNote-linux-x86_64.deb \
-            NotionNote-macos-arm64.dmg \
-            NotionNote-macos-x86_64.dmg \
-            NotionNote-windows-x86_64.msi \
-            NotionNote-windows-x86_64.exe; do
+            Monolog-linux-x86_64.AppImage \
+            Monolog-linux-x86_64.deb \
+            Monolog-macos-arm64.dmg \
+            Monolog-macos-x86_64.dmg \
+            Monolog-windows-x86_64.msi \
+            Monolog-windows-x86_64.exe; do
             test -s "$f" || { echo "::error::Missing or empty artifact: $f"; exit 1; }
           done
           ls -la
 
-      - name: Create GitHub Release
+      - name: Publish or Update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "NotionNote $GITHUB_REF_NAME" \
-            --generate-notes \
-            dist-release/*
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Uploading build assets..."
+            gh release upload "$TAG" dist-release/* --clobber
+          else
+            echo "Creating new release $TAG..."
+            gh release create "$TAG" \
+              --title "Monolog $TAG" \
+              --generate-notes \
+              dist-release/*
+          fi
