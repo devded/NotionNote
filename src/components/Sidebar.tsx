@@ -2,7 +2,6 @@ import { forwardRef } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { dateGroup } from "@/lib/format";
 import { useNotes } from "@/store/notes";
 import { NoteStatusIcon } from "./SyncStatus";
@@ -55,7 +54,7 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar
 
       <Separator />
 
-      <ScrollArea className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="py-1 pr-2 pl-1">
           {groups.length === 0 && (
             <p className="px-3 py-6 text-xs text-muted-foreground">
@@ -78,7 +77,7 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar
             </div>
           ))}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 });
