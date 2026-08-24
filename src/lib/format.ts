@@ -1,19 +1,17 @@
+const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
 export function formatRelative(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
-  const diff = Date.now() - then;
-  const min = Math.floor(diff / 60000);
-  if (min < 1) return "just now";
-  if (min < 60) return `${min} minute${min === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(min / 60);
-  if (hours < 24 && new Date(iso).toDateString() === new Date().toDateString()) {
-    return `today at ${new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  }
-  return new Date(iso).toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-    year: new Date(iso).getFullYear() === new Date().getFullYear() ? undefined : "numeric",
-  });
+  const sec = Math.round((then - Date.now()) / 1000);
+  if (Math.abs(sec) < 60) return "just now";
+  const min = Math.round(sec / 60);
+  if (Math.abs(min) < 60) return rtf.format(min, "minute");
+  const hours = Math.round(min / 60);
+  if (Math.abs(hours) < 24) return rtf.format(hours, "hour");
+  const days = Math.round(hours / 24);
+  if (Math.abs(days) < 30) return rtf.format(days, "day");
+  return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 /** Group label for the sidebar list. */
