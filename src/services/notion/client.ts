@@ -71,7 +71,7 @@ export async function notionRequest<T = any>(
     return await invoke<Value>("notion_request", {
       method,
       path,
-      body: body ? JSON.parse(JSON.stringify(body)) : null,
+      body: body ?? null,
     }) as T;
   } catch (e) {
     let payload: any = null;

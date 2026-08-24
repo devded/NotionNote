@@ -1,5 +1,5 @@
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
@@ -142,20 +142,6 @@ async fn notion_request(
 
 // ---------- Local persistence (config + notes cache) ----------
 
-#[derive(Serialize, Deserialize, Default)]
-struct Config {
-    #[serde(default)]
-    database_name: String,
-    #[serde(default)]
-    database_id: Option<String>,
-    #[serde(default)]
-    data_source_id: Option<String>,
-    #[serde(default)]
-    connected: bool,
-    #[serde(default)]
-    theme: Option<String>,
-}
-
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -178,25 +164,21 @@ fn write_json<T: Serialize>(path: &PathBuf, value: &T) -> Result<(), String> {
 #[tauri::command]
 fn load_config(app: AppHandle) -> Result<Value, String> {
     let path = config_path(&app)?;
-    Ok(read_json::<Config>(&path).map(|c| serde_json::to_value(c).unwrap()).unwrap_or_else(|| {
+    Ok(read_json::<Value>(&path).unwrap_or_else(|| {
         serde_json::json!({ "database_name": "random_notes_desktop" })
     }))
 }
 
 #[tauri::command]
 fn save_config(app: AppHandle, config: Value) -> Result<(), String> {
-    let cfg: Config = serde_json::from_value(config).map_err(|e| e.to_string())?;
-    write_json(&config_path(&app)?, &cfg)
+    write_json(&config_path(&app)?, &config)
 }
 
 #[tauri::command]
 fn load_notes(app: AppHandle) -> Result<Value, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let path = dir.join("notes.json");
-    Ok(match read_json::<Value>(&path) {
-        Some(v) => v,
-        None => Value::Array(vec![]),
-    })
+    Ok(read_json::<Value>(&path).unwrap_or(Value::Array(vec![])))
 }
 
 #[tauri::command]
@@ -218,7 +200,6 @@ fn clear_local_cache(app: AppHandle) -> Result<(), String> {
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png")) {
                 for (_label, window) in app.webview_windows() {
