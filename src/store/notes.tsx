@@ -492,6 +492,36 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     void persistNow();
   }, [persistNow]);
 
+  // Flush pending writes before the window closes or reloads so the 400ms
+  // save debounce can never swallow the user's last keystrokes.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let closing = false;
+    const unlisten = win.onCloseRequested(async (event) => {
+      if (closing) return;
+      event.preventDefault();
+      closing = true;
+      try {
+        if (saveTimer.current) {
+          window.clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+        }
+        await persistNow();
+      } catch (e) {
+        console.debug("[exit] final save failed:", e);
+      } finally {
+        void win.destroy();
+      }
+    });
+    // Covers reloads (Cmd+R / devtools refresh), which bypass onCloseRequested.
+    const onPageHide = () => void persistNow().catch(() => {});
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      void unlisten.then((fn) => fn());
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [persistNow]);
+
   const connect = useCallback(
     async (apiKey: string, dbName: string) => {
       await invoke("set_api_key", { key: apiKey });
