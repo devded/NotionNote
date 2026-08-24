@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AppConfig, Note, PersistedNotes, SyncStatus, ThemeMode } from "@/types/note";
 import { ensureDatabase } from "@/services/notion/database";
 import {
@@ -134,8 +135,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     syncingRef.current = true;
     setGlobalSync("syncing");
     let hadError = false;
+
+    // Anything not yet confirmed synced needs a push — this includes notes
+    // previously marked "error" so failures are retried automatically.
+    const needsPush = (n: Note): boolean => n.sync_status !== "synced";
     try {
-      // 1. Process pending deletes in Notion
+      // 1. Process pending deletes in Notion.
+      // A single failed delete must not abort the others.
       const remainingPendingDeletes: string[] = [];
       for (const pageId of storeRef.current.pendingDeletes) {
         try {
@@ -143,7 +149,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         } catch (e: any) {
           if (e?.code === "http_404" || e?.code === "not_found") continue; // already gone
           remainingPendingDeletes.push(pageId);
-          throw e;
         }
       }
 
@@ -153,7 +158,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         { title: string; content: string }
       >();
       for (const n of storeRef.current.notes) {
-        if (n.sync_status === "pending") {
+        if (needsPush(n)) {
           pendingSnapshots.set(n.id, { title: n.title, content: n.content });
         }
       }
@@ -203,6 +208,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       let hasMorePending = false;
 
       for (const r of remote) {
+        // Skip pages whose deletion is still queued/failed — otherwise they
+        // would be resurrected as "newly created" notes.
+        if (remainingPendingDeletes.includes(r.id)) continue;
+
         const local = fresh.notes.find(
           (n) => (n.notion_page_id && n.notion_page_id === r.id) || n.id === r.id,
         );
@@ -236,8 +245,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               updated_at: pushInfo.lastEditedTime,
             });
           }
-        } else if (local.sync_status === "pending") {
-          // Local note was modified locally after snapshots were taken
+        } else if (needsPush(local)) {
+          // Local note was modified locally after snapshots were taken,
+          // or previously errored and retried below.
           hasMorePending = true;
           merged.push(local);
         } else {
@@ -278,7 +288,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               updated_at: pushInfo.lastEditedTime,
             });
           } else {
-            if (local.sync_status === "pending") hasMorePending = true;
+            if (needsPush(local)) hasMorePending = true;
             merged.unshift(local);
           }
         }
