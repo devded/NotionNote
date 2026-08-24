@@ -55,8 +55,15 @@ const emptyPersisted: PersistedNotes = {
   pendingDeletes: [],
 };
 
-function uid(): string {
-  return crypto.randomUUID();
+function applyTheme(theme: ThemeMode) {
+  const root = document.documentElement;
+  root.classList.remove("light", "dark", "kami", "herdr");
+  if (theme === "system") {
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    root.classList.add(prefersDark ? "dark" : "light");
+  } else {
+    root.classList.add(theme);
+  }
 }
 
 export function NotesProvider({ children }: { children: React.ReactNode }) {
@@ -87,7 +94,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const persistNow = useCallback(async () => {
-    await invoke("save_notes", { notes: JSON.parse(JSON.stringify(storeRef.current)) });
+    await invoke("save_notes", { notes: storeRef.current });
   }, []);
 
   const scheduleSave = useCallback(() => {
@@ -333,6 +340,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           savedTheme === "herdr"
         ) {
           setThemeState(savedTheme as ThemeMode);
+          applyTheme(savedTheme as ThemeMode);
+        } else {
+          applyTheme("system");
         }
         const saved = (await invoke("load_notes")) as PersistedNotes;
         applyPersisted({
@@ -348,6 +358,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Sync theme changes to document root
+  useEffect(() => {
+    applyTheme(theme);
+    if (theme === "system") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      const listener = () => applyTheme("system");
+      mq.addEventListener("change", listener);
+      return () => mq.removeEventListener("change", listener);
+    }
+  }, [theme]);
 
   // Connectivity, window focus & periodic sync events.
   useEffect(() => {
@@ -395,7 +416,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   // ------------------------------------------------------------------ api
 
   const createNote = useCallback((): string => {
-    const id = uid();
+    const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const note: Note = {
       id,
@@ -476,9 +497,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       };
       setConfig(next);
       configRef.current = next;
-      await invoke("save_config", {
-        config: JSON.parse(JSON.stringify({ ...next, theme })),
-      });
+      await invoke("save_config", { config: { ...next, theme } });
       // First pull from Notion
       const remote = await fetchNotes(result.dataSourceId);
       const existing = storeRef.current.notes;
@@ -507,9 +526,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     };
     setConfig(next);
     configRef.current = next;
-    await invoke("save_config", {
-      config: JSON.parse(JSON.stringify({ ...next, theme })),
-    });
+    await invoke("save_config", { config: { ...next, theme } });
   }, [theme]);
 
   const clearCache = useCallback(async () => {
@@ -535,19 +552,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       };
       setConfig(next);
       configRef.current = next;
-      await invoke("save_config", {
-        config: JSON.parse(JSON.stringify({ ...next, theme })),
-      });
+      await invoke("save_config", { config: { ...next, theme } });
     }
   }, [theme]);
 
   const setTheme = useCallback(
     (t: ThemeMode) => {
       setThemeState(t);
+      applyTheme(t);
       void invoke("save_config", {
-        config: JSON.parse(
-          JSON.stringify({ ...configRef.current, theme: t }),
-        ),
+        config: { ...configRef.current, theme: t },
       }).catch(console.debug);
     },
     [],
