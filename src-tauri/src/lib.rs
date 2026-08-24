@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tauri::{AppHandle, Manager};
 
 const SERVICE: &str = "random-notes-desktop";
@@ -78,6 +79,19 @@ fn load_api_key(app: &AppHandle) -> Option<String> {
 const NOTION_API: &str = "https://api.notion.com/v1";
 const NOTION_VERSION: &str = "2025-09-03";
 
+/// Shared client: enables connection pooling and guarantees requests can never
+/// hang forever (a hung request would otherwise stall the sync engine).
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("failed to build HTTP client")
+    })
+}
+
 #[tauri::command]
 async fn notion_request(
     app: AppHandle,
@@ -89,7 +103,7 @@ async fn notion_request(
         r#"{"code":"unauthorized","message":"No Notion API key configured."}"#.to_string()
     })?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let url = format!("{}{}", NOTION_API, path);
     let m = method.to_uppercase();
     let mut req = match m.as_str() {
@@ -157,8 +171,15 @@ fn write_json<T: Serialize>(path: &PathBuf, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    fs::write(path, serde_json::to_vec(value).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
+    let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+    // Write to a temp file first, then atomically rename over the target so a
+    // crash mid-write can never corrupt the only copy of the user's data.
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 #[tauri::command]
