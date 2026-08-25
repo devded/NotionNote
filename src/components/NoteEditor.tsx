@@ -129,7 +129,7 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
               setContent(next);
               queueUpdate(note.id, { content: next });
             }}
-            className="min-h-48 w-full flex-1 resize-none border-none bg-transparent p-0 text-[15px] leading-relaxed shadow-none focus-visible:ring-0"
+            className="min-h-48 w-full flex-1 resize-none border-none bg-transparent p-0 text-[15.5px] font-normal leading-[1.75] tracking-[-0.005em] text-foreground/90 placeholder:text-muted-foreground/50 shadow-none focus-visible:ring-0"
           />
         </div>
 

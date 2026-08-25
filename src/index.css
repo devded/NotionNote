@@ -121,6 +121,8 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     scrollbar-width: thin;
     scrollbar-color: oklch(0.8 0 0) transparent;
   }

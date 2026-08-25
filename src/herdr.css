@@ -103,14 +103,14 @@
   color: #86826f;
 }
 
-/* Note title with bold Archivo typography */
+/* Note title: Clean semibold typography */
 .herdr .note-title {
   font-family: var(--font-heading);
-  font-weight: 800;
-  font-size: 1.85rem;
-  line-height: 1.2;
-  letter-spacing: -0.035em;
-  color: #15140f;
+  font-weight: 700;
+  font-size: 1.75rem;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+  color: #1a1914;
 }
 
 /* Header bar styling */
@@ -174,12 +174,14 @@
   color: #15140f;
 }
 
-/* Prose editor */
+/* Prose editor: clean, readable regular weight */
 .herdr textarea {
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: 15.5px;
+  font-weight: 400;
   line-height: 1.75;
-  color: #15140f;
+  letter-spacing: -0.005em;
+  color: #24221c;
 }
 
 /* Action buttons */
