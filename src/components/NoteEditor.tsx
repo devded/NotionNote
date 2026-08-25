@@ -133,7 +133,7 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
           />
         </div>
 
-        <div className="sticky bottom-0 flex items-center justify-end bg-background/80 px-8 py-3 backdrop-blur-xs">
+        <div className="flex items-center justify-end px-8 pt-2 pb-4">
           <EditorStatus note={note} />
         </div>
       </div>
