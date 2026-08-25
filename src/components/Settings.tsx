@@ -149,7 +149,6 @@ export function SettingsDialog({
                 <SelectItem value="system">System</SelectItem>
                 <SelectItem value="light">Light</SelectItem>
                 <SelectItem value="dark">Dark</SelectItem>
-                <SelectItem value="kami">Kami (Paper)</SelectItem>
                 <SelectItem value="herdr">Herdr (Paper Light)</SelectItem>
               </SelectContent>
             </Select>
