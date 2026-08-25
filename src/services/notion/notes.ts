@@ -16,7 +16,8 @@ function pageToNote(page: any): Note {
   return {
     id: page.id,
     title,
-    // Property value holds complete text content as atomic fallback
+    // Property holds only a truncated preview; authoritative content lives in
+    // the page body blocks and replaces this whenever it is re-read.
     content: richTextToPlain(props.Content?.rich_text),
     created_at: created,
     updated_at: updated,
@@ -26,15 +27,25 @@ function pageToNote(page: any): Note {
   };
 }
 
+/**
+ * The Content property is a display/search preview only. Notion caps rich_text
+ * values (~2000 chars/item, limited items per property), so keep well under.
+ */
+const CONTENT_PREVIEW_LIMIT = 1500;
+
 function noteProperties(note: {
   title: string;
   content: string;
   created_at: string;
   updated_at: string;
 }) {
+  const preview =
+    note.content.length > CONTENT_PREVIEW_LIMIT
+      ? note.content.slice(0, CONTENT_PREVIEW_LIMIT)
+      : note.content;
   return {
     Title: { title: [{ type: "text", text: { content: note.title || "Untitled" } }] },
-    Content: { rich_text: plainToRichText(note.content) },
+    Content: { rich_text: preview ? plainToRichText(preview) : [] },
     "Created At": { date: note.created_at ? { start: note.created_at } : null },
     "Updated At": { date: note.updated_at ? { start: note.updated_at } : null },
   };
@@ -80,12 +91,14 @@ export async function fetchNotes(
   return notes;
 }
 
-function blocksToText(blocks: any[]): string {
+export function blocksToText(blocks: any[]): string {
   const lines: string[] = [];
   for (const b of blocks) {
     if (b.archived || b.in_trash || !b.type) continue;
     const rt: any[] = b[b.type]?.rich_text ?? [];
-    const text = rt.map((r) => r.plain_text ?? "").join("");
+    const text = rt
+      .map((r) => r.plain_text ?? r.text?.content ?? "")
+      .join("");
     switch (b.type) {
       case "heading_1":
         lines.push(`# ${text}`);
@@ -155,16 +168,37 @@ export function contentToBlocks(content: string): any[] {
   return blocks;
 }
 
+/**
+ * Normalize text exactly the way contentToBlocks does (trailing whitespace
+ * trimmed, blank lines dropped) so remote page bodies can be compared with
+ * local content to detect "nothing changed" cheaply.
+ */
+export function normalizeForCompare(text: string): string {
+  return text
+    .split("\n")
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.trim())
+    .join("\n");
+}
+
+/** Number of block deletions sent concurrently (Notion averages ~3 req/s). */
+const DELETE_CONCURRENCY = 3;
+
 async function syncPageBlocks(pageId: string, content: string) {
-  // 1. Fetch old block IDs
+  // 1. Fetch old blocks — their IDs for deletion, and their text so we can
+  //    detect that nothing actually changed.
   const oldBlockIds: string[] = [];
+  const existingLines: string[] = [];
   let cursor: string | undefined;
   do {
     const res: any = await notionRequest(
       "GET",
       `/blocks/${pageId}/children?page_size=100${cursor ? `&start_cursor=${cursor}` : ""}`,
     );
-    for (const b of res?.results ?? []) {
+    const results: any[] = res?.results ?? [];
+    const text = blocksToText(results);
+    if (text) existingLines.push(text);
+    for (const b of results) {
       if (!b.archived && !b.in_trash) {
         oldBlockIds.push(b.id);
       }
@@ -172,7 +206,14 @@ async function syncPageBlocks(pageId: string, content: string) {
     cursor = res?.has_more ? res?.next_cursor ?? undefined : undefined;
   } while (cursor);
 
-  // 2. Append new blocks FIRST so the page is never empty
+  // 2. Skip the entire fetch-append-delete cycle when Notion already matches.
+  //    This turns repeat updates of unchanged content into a single GET.
+  const existingText = existingLines.join("\n");
+  if (normalizeForCompare(content) === normalizeForCompare(existingText)) {
+    return;
+  }
+
+  // 3. Append new blocks FIRST so the page is never empty mid-update.
   const blocks = contentToBlocks(content);
   if (blocks.length > 0) {
     for (let i = 0; i < blocks.length; i += 100) {
@@ -182,13 +223,28 @@ async function syncPageBlocks(pageId: string, content: string) {
     }
   }
 
-  // 3. Delete old blocks cleanly
-  for (const oldId of oldBlockIds) {
-    try {
-      await notionRequest("DELETE", `/blocks/${oldId}`);
-    } catch {
-      // Ignore if block was already deleted
+  // 4. Delete old blocks in small concurrent batches.
+  let failedDeletes = 0;
+  for (let i = 0; i < oldBlockIds.length; i += DELETE_CONCURRENCY) {
+    const batch = oldBlockIds.slice(i, i + DELETE_CONCURRENCY);
+    const settled = await Promise.allSettled(
+      batch.map((id) => notionRequest("DELETE", `/blocks/${id}`)),
+    );
+    for (let j = 0; j < settled.length; j++) {
+      if (settled[j].status === "fulfilled") continue;
+      failedDeletes++;
+      // 404 just means the block was already gone — not a real failure.
+      const err: any = (settled[j] as PromiseRejectedResult).reason;
+      if (err?.code !== "http_404" && err?.code !== "not_found") {
+        console.debug("[notion] failed to delete old block:", batch[j], err?.message ?? err);
+      } else {
+        failedDeletes--;
+      }
     }
+  }
+  if (failedDeletes > 0) {
+    // Surface the duplication risk instead of silently leaving duplicates.
+    throw new Error(`${failedDeletes} old block(s) could not be deleted; will retry`);
   }
 }
 
@@ -224,11 +280,10 @@ export async function pushUpdateNote(
     properties: noteProperties(note),
   });
   if (note.notion_page_id) {
-    try {
-      await syncPageBlocks(note.notion_page_id, note.content);
-    } catch (e) {
-      console.debug("[notion] error syncing page blocks:", e);
-    }
+    // Deliberately NOT swallowed: if block sync fails, the local note must
+    // stay unsynced so the merge engine retries it instead of silently
+    // leaving duplicated/stale blocks behind forever.
+    await syncPageBlocks(note.notion_page_id, note.content);
   }
   return {
     lastEditedTime: page?.last_edited_time ?? new Date().toISOString(),
