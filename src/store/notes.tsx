@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AppConfig, Note, PersistedNotes, SyncStatus, ThemeMode } from "@/types/note";
 import { ensureDatabase } from "@/services/notion/database";
 import {
@@ -16,6 +17,8 @@ import {
   pushDeleteNote,
   pushUpdateNote,
 } from "@/services/notion/notes";
+import { parsePersistedNotes } from "@/lib/persistence";
+import { mergeRemoteAndLocal, type PushResult } from "@/lib/sync-merge";
 
 export type GlobalSyncState = "idle" | "syncing" | "offline" | "error";
 
@@ -47,6 +50,11 @@ interface NotesStore {
   theme: ThemeMode;
 }
 
+/** Delay before the next automatic retry: exponential backoff capped at 60s. */
+function nextRetryDelay(failures: number): number {
+  return Math.min(1200 * 2 ** failures, 60_000);
+}
+
 const Ctx = createContext<NotesStore | null>(null);
 
 const emptyPersisted: PersistedNotes = {
@@ -55,9 +63,18 @@ const emptyPersisted: PersistedNotes = {
   pendingDeletes: [],
 };
 
+const THEME_CLASSES: ThemeMode[] = ["light", "dark", "herdr"];
+
+/** Apply a theme to the document and mirror it so startup can restore
+ *  synchronously (before first paint) without waiting on async config I/O. */
 function applyTheme(theme: ThemeMode) {
   const root = document.documentElement;
-  root.classList.remove("light", "dark", "kami", "herdr");
+  root.classList.remove(...THEME_CLASSES);
+  try {
+    localStorage.setItem("monolog-theme", JSON.stringify(theme));
+  } catch {
+    /* private mode etc. — non-fatal */
+  }
   if (theme === "system") {
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     root.classList.add(prefersDark ? "dark" : "light");
@@ -87,6 +104,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const syncingRef = useRef(false);
   const syncTimer = useRef<number | null>(null);
   const saveTimer = useRef<number | null>(null);
+  /** Consecutive sync failures — drives exponential backoff between attempts. */
+  const syncFailures = useRef(0);
 
   const applyPersisted = useCallback((p: PersistedNotes) => {
     storeRef.current = p;
@@ -105,11 +124,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }, 400);
   }, [persistNow]);
 
+  // Indirection so scheduleSync can fire the sync engine regardless of
+  // declaration order (runSync is defined below); assigned in an effect.
+  const syncFnRef = useRef<(() => Promise<void>) | null>(null);
+
   const scheduleSync = useCallback((delay = 1200) => {
     if (syncTimer.current) window.clearTimeout(syncTimer.current);
     syncTimer.current = window.setTimeout(() => {
       syncTimer.current = null;
-      void runSync();
+      void syncFnRef.current?.();
     }, delay);
   }, []);
 
@@ -134,8 +157,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     syncingRef.current = true;
     setGlobalSync("syncing");
     let hadError = false;
+
+    // Anything not yet confirmed synced needs a push — this includes notes
+    // previously marked "error" so failures are retried automatically.
+    const needsPush = (n: Note): boolean => n.sync_status !== "synced";
     try {
-      // 1. Process pending deletes in Notion
+      // 1. Process pending deletes in Notion.
+      // A single failed delete must not abort the others.
       const remainingPendingDeletes: string[] = [];
       for (const pageId of storeRef.current.pendingDeletes) {
         try {
@@ -143,7 +171,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         } catch (e: any) {
           if (e?.code === "http_404" || e?.code === "not_found") continue; // already gone
           remainingPendingDeletes.push(pageId);
-          throw e;
         }
       }
 
@@ -153,7 +180,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         { title: string; content: string }
       >();
       for (const n of storeRef.current.notes) {
-        if (n.sync_status === "pending") {
+        if (needsPush(n)) {
           pendingSnapshots.set(n.id, { title: n.title, content: n.content });
         }
       }
@@ -167,14 +194,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const remote = await fetchNotes(cfg.data_source_id, known);
 
       // 4. Push pending notes to Notion
-      const pushResults = new Map<
-        string,
-        {
-          lastEditedTime: string;
-          pageId?: string;
-          snapshot: { title: string; content: string };
-        }
-      >();
+      const pushResults = new Map<string, PushResult>();
 
       for (const [noteId, snapshot] of pendingSnapshots.entries()) {
         const currentLocal = storeRef.current.notes.find((n) => n.id === noteId);
@@ -197,97 +217,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // 5. Merge remote notes with freshest storeRef.current
+      // 5. Merge remote notes with freshest storeRef.current (pure, tested)
       const fresh = storeRef.current;
-      const merged: Note[] = [];
-      let hasMorePending = false;
-
-      for (const r of remote) {
-        const local = fresh.notes.find(
-          (n) => (n.notion_page_id && n.notion_page_id === r.id) || n.id === r.id,
-        );
-
-        if (!local) {
-          // Newly created note on Notion
-          merged.push(r);
-          continue;
-        }
-
-        const pushInfo = pushResults.get(local.id);
-        if (pushInfo) {
-          // Check if user continued typing while push was running
-          const userTypedDuringPush =
-            local.title !== pushInfo.snapshot.title ||
-            local.content !== pushInfo.snapshot.content;
-
-          if (userTypedDuringPush) {
-            hasMorePending = true;
-            merged.push({
-              ...local,
-              notion_page_id: pushInfo.pageId ?? local.notion_page_id,
-              sync_status: "pending",
-            });
-          } else {
-            merged.push({
-              ...local,
-              notion_page_id: pushInfo.pageId ?? local.notion_page_id,
-              sync_status: "synced",
-              last_synced_at: pushInfo.lastEditedTime,
-              updated_at: pushInfo.lastEditedTime,
-            });
-          }
-        } else if (local.sync_status === "pending") {
-          // Local note was modified locally after snapshots were taken
-          hasMorePending = true;
-          merged.push(local);
-        } else {
-          // Local was synced; remote is authoritative
-          const content =
-            r.content !== undefined && r.content !== null && r.content !== ""
-              ? r.content
-              : (r.content === "" ? "" : local.content);
-          merged.push({
-            ...local,
-            ...r,
-            content,
-            sync_status: "synced",
-          });
-        }
-      }
-
-      // 6. Include any newly created local notes not yet in Notion remote query
-      for (const local of fresh.notes) {
-        const alreadyMerged = merged.some(
-          (m) =>
-            m.id === local.id ||
-            (m.notion_page_id && m.notion_page_id === local.notion_page_id),
-        );
-        if (!alreadyMerged) {
-          const pushInfo = pushResults.get(local.id);
-          if (pushInfo) {
-            const userTypedDuringPush =
-              local.title !== pushInfo.snapshot.title ||
-              local.content !== pushInfo.snapshot.content;
-            if (userTypedDuringPush) hasMorePending = true;
-
-            merged.unshift({
-              ...local,
-              notion_page_id: pushInfo.pageId ?? local.notion_page_id,
-              sync_status: userTypedDuringPush ? "pending" : "synced",
-              last_synced_at: pushInfo.lastEditedTime,
-              updated_at: pushInfo.lastEditedTime,
-            });
-          } else {
-            if (local.sync_status === "pending") hasMorePending = true;
-            merged.unshift(local);
-          }
-        }
-      }
-
-      // Sort newest updated first
-      merged.sort(
-        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-      );
+      const { merged, hasMorePending } = mergeRemoteAndLocal({
+        remote,
+        localNotes: fresh.notes,
+        pushResults,
+        pendingDeleteIds: remainingPendingDeletes,
+      });
 
       applyPersisted({
         version: 1,
@@ -296,13 +233,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       });
       await persistNow();
       setLastSyncAt(new Date().toISOString());
+      syncFailures.current = 0;
 
       if (hasMorePending) {
-        scheduleSync(1200);
+        scheduleSync(nextRetryDelay(syncFailures.current));
       }
     } catch (e: any) {
       console.debug("[sync] failed:", e?.message ?? e);
       hadError = true;
+      syncFailures.current += 1;
       if (e?.code !== "network_error") markFailed();
     } finally {
       syncingRef.current = false;
@@ -321,7 +260,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   // Keep refs in sync with state for use inside async engine.
   const configRef = useRef(config);
-  configRef.current = config;
+
+  // Ref mirrors are updated in effects, never during render.
+  useEffect(() => {
+    configRef.current = { ...config };
+    syncFnRef.current = runSync;
+  });
 
   // ------------------------------------------------------------------ init
 
@@ -331,20 +275,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const cfg = (await invoke("load_config")) as AppConfig;
         setConfig({ ...cfg });
         configRef.current = { ...cfg };
-        const savedTheme = (cfg as any).theme as string | undefined;
+        const savedTheme = cfg.theme;
         if (
           savedTheme === "light" ||
           savedTheme === "dark" ||
           savedTheme === "system" ||
-          savedTheme === "kami" ||
           savedTheme === "herdr"
         ) {
+          // "kami" was removed; old configs fall back to "system".
           setThemeState(savedTheme as ThemeMode);
           applyTheme(savedTheme as ThemeMode);
         } else {
           applyTheme("system");
         }
-        const saved = (await invoke("load_notes")) as PersistedNotes;
+        const saved = parsePersistedNotes(await invoke("load_notes"));
         applyPersisted({
           version: 1,
           notes: saved?.notes ?? [],
@@ -397,9 +341,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
-    // Periodic sync polling to detect Notion edits in background
+    // Periodic sync polling to detect Notion edits in background.
+    // Skipped while hidden — returning to the app re-triggers a sync via
+    // focus/visibilitychange, so nothing is missed.
     const iv = window.setInterval(() => {
-      if (navigator.onLine && configRef.current.connected) {
+      if (
+        document.visibilityState === "visible" &&
+        navigator.onLine &&
+        configRef.current.connected
+      ) {
         void runSync();
       }
     }, 15000);
@@ -482,6 +432,36 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     void persistNow();
   }, [persistNow]);
 
+  // Flush pending writes before the window closes or reloads so the 400ms
+  // save debounce can never swallow the user's last keystrokes.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let closing = false;
+    const unlisten = win.onCloseRequested(async (event) => {
+      if (closing) return;
+      event.preventDefault();
+      closing = true;
+      try {
+        if (saveTimer.current) {
+          window.clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+        }
+        await persistNow();
+      } catch (e) {
+        console.debug("[exit] final save failed:", e);
+      } finally {
+        void win.destroy();
+      }
+    });
+    // Covers reloads (Cmd+R / devtools refresh), which bypass onCloseRequested.
+    const onPageHide = () => void persistNow().catch(() => {});
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      void unlisten.then((fn) => fn());
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [persistNow]);
+
   const connect = useCallback(
     async (apiKey: string, dbName: string) => {
       await invoke("set_api_key", { key: apiKey });
@@ -496,7 +476,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         connected: true,
       };
       setConfig(next);
-      configRef.current = next;
+      configRef.current = { ...next };
       await invoke("save_config", { config: { ...next, theme } });
       // First pull from Notion
       const remote = await fetchNotes(result.dataSourceId);
@@ -536,7 +516,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [applyPersisted]);
 
   const testConnection = useCallback(async () => {
-    await invoke("has_api_key").then(Boolean);
+    // Verifies the stored key still works and that the database still exists;
+    // refreshes cached ids if Notion reassigned them.
     const result = await ensureDatabase(configRef.current.database_name, {
       databaseId: configRef.current.database_id,
       dataSourceId: configRef.current.data_source_id,
@@ -551,7 +532,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         data_source_id: result.dataSourceId,
       };
       setConfig(next);
-      configRef.current = next;
+      configRef.current = { ...next };
       await invoke("save_config", { config: { ...next, theme } });
     }
   }, [theme]);

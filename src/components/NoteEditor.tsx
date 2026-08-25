@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,13 +23,49 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
   const [title, setTitle] = useState(note?.title ?? "");
   const [content, setContent] = useState(note?.content ?? "");
 
+  // Local typing is instant; store updates are batched so every keystroke
+  // doesn't re-render the whole app through context.
+  const pendingRef = useRef<{ id: string; title?: string; content?: string } | null>(null);
+  const debounceRef = useRef<number | null>(null);
+
+  const flushPending = useCallback(() => {
+    if (debounceRef.current) {
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    const p = pendingRef.current;
+    pendingRef.current = null;
+    if (p) updateNote(p.id, { ...(p.title !== undefined && { title: p.title }), ...(p.content !== undefined && { content: p.content }) });
+  }, [updateNote]);
+
+  const queueUpdate = useCallback(
+    (id: string, patch: Partial<Pick<Note, "title" | "content">>) => {
+      pendingRef.current = { ...(pendingRef.current ?? { id }), id, ...patch };
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      debounceRef.current = window.setTimeout(() => {
+        debounceRef.current = null;
+        flushPending();
+      }, 300);
+    },
+    [flushPending],
+  );
+
+  // Flush unsaved keystrokes when switching notes or unmounting.
+  useEffect(() => {
+    return () => flushPending();
+  }, [flushPending]);
+
   // Update editor view when remote sync from Notion brings external updates
   // (Only when note is in synced state, never interrupting local in-progress typing)
   useEffect(() => {
     if (note && note.sync_status === "synced") {
+      // Deliberate prop-to-state reconciliation on remote updates; narrowing
+      // deps is intentional so only real content changes reset the fields.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTitle(note.title ?? "");
       setContent(note.content ?? "");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note?.updated_at, note?.sync_status]);
 
   if (!note) {
@@ -49,7 +85,7 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
           onChange={(e) => {
             const next = e.target.value;
             setTitle(next);
-            updateNote(note.id, { title: next });
+            queueUpdate(note.id, { title: next });
           }}
           className="note-title h-auto border-none bg-transparent px-0 text-2xl font-semibold tracking-tight shadow-none focus-visible:ring-0"
         />
@@ -80,7 +116,7 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
         onChange={(e) => {
           const next = e.target.value;
           setContent(next);
-          updateNote(note.id, { content: next });
+          queueUpdate(note.id, { content: next });
         }}
         className="min-h-0 flex-1 resize-none border-none bg-transparent px-8 py-4 text-[15px] leading-relaxed shadow-none focus-visible:ring-0"
       />

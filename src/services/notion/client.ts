@@ -74,7 +74,7 @@ export async function notionRequest<T = any>(
       body: body ?? null,
     }) as T;
   } catch (e) {
-    let payload: any = null;
+    let payload: any;
     try {
       payload = JSON.parse(String(e));
     } catch {

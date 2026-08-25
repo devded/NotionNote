@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tauri::{AppHandle, Manager};
 
 const SERVICE: &str = "random-notes-desktop";
@@ -78,6 +79,19 @@ fn load_api_key(app: &AppHandle) -> Option<String> {
 const NOTION_API: &str = "https://api.notion.com/v1";
 const NOTION_VERSION: &str = "2025-09-03";
 
+/// Shared client: enables connection pooling and guarantees requests can never
+/// hang forever (a hung request would otherwise stall the sync engine).
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("failed to build HTTP client")
+    })
+}
+
 #[tauri::command]
 async fn notion_request(
     app: AppHandle,
@@ -89,7 +103,7 @@ async fn notion_request(
         r#"{"code":"unauthorized","message":"No Notion API key configured."}"#.to_string()
     })?;
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let url = format!("{}{}", NOTION_API, path);
     let m = method.to_uppercase();
     let mut req = match m.as_str() {
@@ -104,7 +118,7 @@ async fn notion_request(
         .header("Notion-Version", NOTION_VERSION)
         .header("Content-Type", "application/json");
 
-    // Rate limit: retry once after a short backoff.
+    // Retry once with backoff on rate limiting or server errors.
     for attempt in 0..2 {
         let request = match (&body, m.as_str()) {
             (Some(b), "POST") | (Some(b), "PATCH") => req.try_clone().unwrap().json(b),
@@ -119,10 +133,20 @@ async fn notion_request(
         })?;
 
         let status = resp.status().as_u16();
+        // Honour Notion's Retry-After header if present (seconds); otherwise
+        // fall back to a short fixed delay.
+        let retry_after_secs = resp
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(2)
+            .min(30);
         let text = resp.text().await.unwrap_or_default();
 
-        if status == 429 && attempt == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let retryable = status == 429 || status >= 500;
+        if retryable && attempt == 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(retry_after_secs)).await;
             continue;
         }
 
@@ -157,8 +181,15 @@ fn write_json<T: Serialize>(path: &PathBuf, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    fs::write(path, serde_json::to_vec(value).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
+    let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+    // Write to a temp file first, then atomically rename over the target so a
+    // crash mid-write can never corrupt the only copy of the user's data.
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 #[tauri::command]

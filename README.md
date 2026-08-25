@@ -1,4 +1,4 @@
-# Random Notes Desktop
+# Monolog
 
 A small, fast, offline-capable desktop note-taking app backed by **Notion**.
 Built with **Tauri 2 + React + TypeScript + Tailwind CSS + shadcn/ui**.
@@ -56,10 +56,10 @@ Pushing a `v*` tag automatically builds in parallel and publishes to
 **GitHub → Releases**:
 
 ```text
-Linux   x86_64  → NotionNote-linux-x86_64.AppImage, NotionNote-linux-x86_64.deb
-macOS   ARM64   → NotionNote-macos-arm64.dmg
-macOS   Intel   → NotionNote-macos-x86_64.dmg
-Windows x86_64  → NotionNote-windows-x86_64.msi, NotionNote-windows-x86_64.exe
+Linux   x86_64  → Monolog-linux-x86_64.AppImage, Monolog-linux-x86_64.deb
+macOS   ARM64   → Monolog-macos-arm64.dmg
+macOS   Intel   → Monolog-macos-x86_64.dmg
+Windows x86_64  → Monolog-windows-x86_64.msi, Monolog-windows-x86_64.exe
 ```
 
 If any platform build or artifact validation fails, no release is created.

@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -17,36 +17,53 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar
 ) {
   const { notes, query, setQuery, select, selectedId } = useNotes();
 
-  const filtered = notes.filter((n) => {
-    if (!query.trim()) return true;
-    const q = query.toLowerCase();
-    return n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q);
-  });
+  // Local input state keeps typing instant; the (expensive) store-wide query
+  // update that drives filtering is debounced.
+  const [inputValue, setInputValue] = useState(query);
+  const debounceRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+  }, []);
+  const onSearchChange = (value: string) => {
+    setInputValue(value);
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => setQuery(value), 150);
+  };
 
-  // Sort newest-first and group by date.
-  const sorted = [...filtered].sort(
-    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-  );
-  const groups: { label: string; notes: Note[] }[] = [];
-  for (const n of sorted) {
-    const label = dateGroup(n.updated_at);
-    const g = groups.find((x) => x.label === label);
-    if (g) g.notes.push(n);
-    else groups.push({ label, notes: [n] });
-  }
-  const groupOrder = ["Today", "Yesterday", "Previous 7 days", "Previous 30 days", "Older"];
-  groups.sort((a, b) => groupOrder.indexOf(a.label) - groupOrder.indexOf(b.label));
+  const groups = useMemo(() => {
+    const filtered = notes.filter((n) => {
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      return n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q);
+    });
+
+    // Sort newest-first and group by date.
+    const sorted = [...filtered].sort(
+      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+    );
+    const result: { label: string; notes: Note[] }[] = [];
+    for (const n of sorted) {
+      const label = dateGroup(n.updated_at);
+      const g = result.find((x) => x.label === label);
+      if (g) g.notes.push(n);
+      else result.push({ label, notes: [n] });
+    }
+    const groupOrder = ["Today", "Yesterday", "Previous 7 days", "Previous 30 days", "Older"];
+    result.sort((a, b) => groupOrder.indexOf(a.label) - groupOrder.indexOf(b.label));
+    return result;
+  }, [notes, query]);
 
   return (
     <div ref={ref} className="flex h-full min-w-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="p-3 pb-2">
-        <div className="relative">
+        <div className="relative" role="search">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={inputValue}
+            onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search notes…"
+            aria-label="Search notes"
             className="h-8 pl-8 text-sm"
           />
         </div>
@@ -54,7 +71,7 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar
 
       <Separator />
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto" aria-label="Note list">
         <div className="py-1 pr-2 pl-1">
           {groups.length === 0 && (
             <p className="px-3 py-6 text-xs text-muted-foreground">

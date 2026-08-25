@@ -139,7 +139,7 @@ export async function ensureDatabase(
           existed: true,
         };
       }
-    } catch (e) {
+    } catch {
       console.debug("[notion] stored data source invalid, searching again");
     }
   }

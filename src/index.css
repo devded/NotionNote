@@ -1,7 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "@fontsource-variable/geist";
-@import "./kami.css";
 @import "./herdr.css";
 
 @custom-variant dark (&:is(.dark *));
