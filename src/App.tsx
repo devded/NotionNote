@@ -107,8 +107,29 @@ export default function App() {
               draggingRef.current = true;
               document.body.style.cursor = "col-resize";
             }}
-            className="w-px shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary/40"
+            onKeyDown={(e) => {
+              if (e.key === "ArrowLeft") {
+                setSidebarWidth((w) => Math.max(MIN_SIDEBAR, w - 16));
+                e.preventDefault();
+              } else if (e.key === "ArrowRight") {
+                setSidebarWidth((w) => Math.min(MAX_SIDEBAR, w + 16));
+                e.preventDefault();
+              } else if (e.key === "Home") {
+                setSidebarWidth(MIN_SIDEBAR);
+                e.preventDefault();
+              } else if (e.key === "End") {
+                setSidebarWidth(MAX_SIDEBAR);
+                e.preventDefault();
+              }
+            }}
+            className="w-px shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary/40 focus-visible:bg-primary focus-visible:outline-none"
             role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            aria-valuemin={MIN_SIDEBAR}
+            aria-valuemax={MAX_SIDEBAR}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
           />
 
           <main className="flex min-w-0 flex-1 flex-col">
