@@ -21,13 +21,15 @@ export interface PersistedNotes {
   pendingDeletes: string[];
 }
 
-export type ThemeMode = "system" | "light" | "dark" | "kami" | "herdr";
+export type ThemeMode = "system" | "light" | "dark" | "herdr";
 
 export interface AppConfig {
   database_name: string;
   database_id: string | null;
   data_source_id: string | null;
   connected: boolean;
+  /** Persisted UI preference (not part of the Notion connection config). */
+  theme?: ThemeMode;
 }
 
 /** Result of the connect/ensure-database flow shown during onboarding. */
