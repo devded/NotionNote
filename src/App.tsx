@@ -132,7 +132,7 @@ export default function App() {
             tabIndex={0}
           />
 
-          <main className="flex min-w-0 flex-1 flex-col">
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <NoteEditor
               key={selected?.id ?? "none"}
               note={selected}
