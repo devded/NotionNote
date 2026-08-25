@@ -118,7 +118,7 @@ async fn notion_request(
         .header("Notion-Version", NOTION_VERSION)
         .header("Content-Type", "application/json");
 
-    // Rate limit: retry once after a short backoff.
+    // Retry once with backoff on rate limiting or server errors.
     for attempt in 0..2 {
         let request = match (&body, m.as_str()) {
             (Some(b), "POST") | (Some(b), "PATCH") => req.try_clone().unwrap().json(b),
@@ -133,10 +133,20 @@ async fn notion_request(
         })?;
 
         let status = resp.status().as_u16();
+        // Honour Notion's Retry-After header if present (seconds); otherwise
+        // fall back to a short fixed delay.
+        let retry_after_secs = resp
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(2)
+            .min(30);
         let text = resp.text().await.unwrap_or_default();
 
-        if status == 429 && attempt == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let retryable = status == 429 || status >= 500;
+        if retryable && attempt == 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(retry_after_secs)).await;
             continue;
         }
 
