@@ -80,7 +80,7 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
       <div className="flex min-h-full flex-1 flex-col">
-        <div className="flex items-start justify-between gap-4 px-8 pt-6">
+        <div className="flex items-center justify-between gap-4 px-8 pt-6">
           <Input
             value={title}
             placeholder="Untitled"
@@ -91,26 +91,27 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
             }}
             className="note-title h-auto border-none bg-transparent px-0 text-2xl font-semibold tracking-tight shadow-none focus-visible:ring-0"
           />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-destructive"
-                onClick={() => onDeleteRequest(note)}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Delete note</TooltipContent>
-          </Tooltip>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-xs text-muted-foreground/75 select-none">
+              Updated {formatRelative(note.updated_at)}
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => onDeleteRequest(note)}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete note</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
 
-        <p className="px-8 pt-1 text-xs text-muted-foreground">
-          Updated {formatRelative(note.updated_at)}
-        </p>
-
-        <Separator className="mx-8 mt-4 w-[calc(100%-4rem)]" />
+        <Separator className="mx-8 mt-3 w-[calc(100%-4rem)]" />
 
         <div
           className="flex min-h-0 flex-1 flex-col px-8 py-4 cursor-text"
