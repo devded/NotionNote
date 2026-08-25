@@ -26,6 +26,8 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Install Linux system dependencies
         run: |
@@ -42,12 +44,19 @@ jobs:
       - name: TypeScript check
         run: npx tsc --noEmit
 
-      # No linter or test runner is configured in this repository yet.
-      # Add steps here when they are introduced.
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      - name: Unit tests (Vitest)
+        run: npm test
 
       - name: Build frontend
         run: npm run build
 
       - name: Rust check (Tauri backend)
         run: cargo check
+        working-directory: src-tauri
+
+      - name: Rust lint (Clippy)
+        run: cargo clippy -- -D warnings
         working-directory: src-tauri

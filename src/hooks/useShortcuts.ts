@@ -9,7 +9,9 @@ export function useShortcuts(opts: {
   sync?: () => void;
 }) {
   const optsRef = useRef(opts);
-  optsRef.current = opts;
+  useEffect(() => {
+    optsRef.current = opts;
+  });
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
