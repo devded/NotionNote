@@ -4,7 +4,9 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 const SERVICE: &str = "random-notes-desktop";
@@ -23,10 +25,27 @@ fn keyring_entry() -> Option<keyring::Entry> {
     keyring::Entry::new(SERVICE, KEY_USER).ok()
 }
 
+/// In-memory copy of the key so Notion requests don't hit the OS keychain
+/// (a D-Bus round trip on Linux, possibly an unlock prompt) every time.
+fn key_cache() -> &'static Mutex<Option<String>> {
+    static CACHE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn set_cached_key(key: Option<String>) {
+    *key_cache().lock().unwrap_or_else(|e| e.into_inner()) = key;
+}
+
 #[tauri::command]
 fn set_api_key(app: AppHandle, key: String) -> Result<(), String> {
+    store_api_key(&app, &key)?;
+    set_cached_key(Some(key));
+    Ok(())
+}
+
+fn store_api_key(app: &AppHandle, key: &str) -> Result<(), String> {
     if let Some(entry) = keyring_entry() {
-        match entry.set_password(&key) {
+        match entry.set_password(key) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 log::warn!("keyring unavailable, using file fallback");
@@ -34,7 +53,7 @@ fn set_api_key(app: AppHandle, key: String) -> Result<(), String> {
             }
         }
     }
-    let path = fallback_key_path(&app).ok_or("no storage location available")?;
+    let path = fallback_key_path(app).ok_or("no storage location available")?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -48,23 +67,16 @@ fn set_api_key(app: AppHandle, key: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn has_api_key(app: AppHandle) -> bool {
-    load_api_key(&app).is_some()
-}
-
-#[tauri::command]
-fn delete_api_key(app: AppHandle) -> Result<(), String> {
-    if let Some(entry) = keyring_entry() {
-        let _ = entry.delete_credential();
-    }
-    if let Some(path) = fallback_key_path(&app) {
-        let _ = fs::remove_file(path);
-    }
-    Ok(())
-}
-
 fn load_api_key(app: &AppHandle) -> Option<String> {
+    if let Some(key) = key_cache().lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return Some(key);
+    }
+    let key = read_stored_key(app)?;
+    set_cached_key(Some(key.clone()));
+    Some(key)
+}
+
+fn read_stored_key(app: &AppHandle) -> Option<String> {
     if let Some(entry) = keyring_entry() {
         if let Ok(key) = entry.get_password() {
             return Some(key);
@@ -164,11 +176,32 @@ async fn notion_request(
     unreachable!()
 }
 
+/// Check a key against Notion without storing it, so a typo can never
+/// replace a working key.
+#[tauri::command]
+async fn verify_api_key(key: String) -> Result<(), String> {
+    let resp = http_client()
+        .get(format!("{}/users/me", NOTION_API))
+        .bearer_auth(key.trim())
+        .header("Notion-Version", NOTION_VERSION)
+        .send()
+        .await
+        .map_err(network_err)?;
+    let status = resp.status().as_u16();
+    if (200..300).contains(&status) {
+        return Ok(());
+    }
+    Err(http_err(status, &resp.text().await.unwrap_or_default()))
+}
+
 // ---------- Note images (stored locally, uploaded to Notion on sync) ----------
 
 const IMAGE_EXTS: [&str; 4] = ["png", "jpg", "gif", "webp"];
 /// Notion's single-part upload limit.
 const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+/// Image transfers override the client's 20s timeout: up to 20 MB must
+/// survive slow connections instead of failing and retrying forever.
+const IMAGE_TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Image names come from the frontend and from Notion captions, so they are
 /// validated strictly to rule out path traversal: `[A-Za-z0-9-]+.<ext>`.
@@ -293,6 +326,7 @@ async fn notion_upload_image(app: AppHandle, name: String) -> Result<String, Str
         .bearer_auth(&key)
         .header("Notion-Version", NOTION_VERSION)
         .multipart(reqwest::multipart::Form::new().part("file", part))
+        .timeout(IMAGE_TRANSFER_TIMEOUT)
         .send()
         .await
         .map_err(network_err)?;
@@ -301,6 +335,24 @@ async fn notion_upload_image(app: AppHandle, name: String) -> Result<String, Str
         return Err(http_err(status, &resp.text().await.unwrap_or_default()));
     }
     Ok(id)
+}
+
+/// Delete stored images no note references any more (and stale temp files).
+#[tauri::command]
+fn prune_images(app: AppHandle, keep: Vec<String>) -> Result<u32, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("images");
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(0);
+    };
+    let keep: HashSet<String> = keep.into_iter().collect();
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !keep.contains(&name) && fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 /// Fetch a Notion-hosted image (signed URL) into the local store, once.
@@ -313,7 +365,12 @@ async fn download_image(app: AppHandle, name: String, url: String) -> Result<(),
     if !url.starts_with("https://") {
         return Err("only https image URLs are allowed".into());
     }
-    let resp = http_client().get(&url).send().await.map_err(network_err)?;
+    let resp = http_client()
+        .get(&url)
+        .timeout(IMAGE_TRANSFER_TIMEOUT)
+        .send()
+        .await
+        .map_err(network_err)?;
     let status = resp.status().as_u16();
     if !(200..300).contains(&status) {
         return Err(http_err(status, ""));
@@ -384,8 +441,7 @@ fn clear_local_cache(app: AppHandle) -> Result<(), String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     fs::remove_file(dir.join("notes.json")).ok();
     fs::remove_dir_all(dir.join("images")).ok();
-    let cfg_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    fs::remove_file(cfg_dir.join("config.json")).ok();
+    // config.json is kept: clearing the cache must not drop the connection.
     Ok(())
 }
 
@@ -403,9 +459,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             set_api_key,
-            has_api_key,
-            delete_api_key,
             notion_request,
+            verify_api_key,
+            prune_images,
             save_image,
             paste_clipboard_image,
             read_image,
