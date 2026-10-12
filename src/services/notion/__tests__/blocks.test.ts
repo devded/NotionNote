@@ -59,3 +59,38 @@ describe("normalizeForCompare", () => {
     expect(normalizeForCompare("a")).not.toBe(normalizeForCompare("A"));
   });
 });
+
+describe("image blocks", () => {
+  const line = "![image](local:abc-123.png)";
+
+  it("maps local images to uploaded image blocks captioned with their name", () => {
+    const [b] = contentToBlocks(line, new Map([["abc-123.png", "upload-1"]]));
+    expect(b.type).toBe("image");
+    expect(b.image.file_upload.id).toBe("upload-1");
+    expect(b.image.caption[0].text.content).toBe("abc-123.png");
+  });
+
+  it("falls back to a paragraph when a local image was not uploaded", () => {
+    expect(contentToBlocks(line)[0].type).toBe("paragraph");
+  });
+
+  it("round-trips an uploaded image as Notion returns it", () => {
+    const fromNotion = {
+      id: "blk",
+      type: "image",
+      image: {
+        type: "file",
+        file: { url: "https://s3.example/x/abc-123.png?sig=1" },
+        caption: [{ plain_text: "abc-123.png" }],
+      },
+    };
+    expect(blocksToText([fromNotion])).toBe(line);
+  });
+
+  it("names Notion-native images by block id and keeps external URLs", () => {
+    const native = { id: "blk-1", type: "image", image: { type: "file", file: { url: "https://s3.example/a.JPG?x" }, caption: [] } };
+    const external = { id: "blk-2", type: "image", image: { type: "external", external: { url: "https://e.com/i.png" } } };
+    expect(blocksToText([native, external])).toBe("![image](local:blk-1.jpg)\n![image](https://e.com/i.png)");
+    expect(contentToBlocks("![image](https://e.com/i.png)")[0].image.external.url).toBe("https://e.com/i.png");
+  });
+});
