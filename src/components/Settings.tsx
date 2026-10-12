@@ -79,15 +79,10 @@ export function SettingsDialog({
     }
     setBusy(true);
     try {
-      if (apiKey.trim()) {
-        // connect() verifies the key before replacing the stored one, so a
-        // failed reconnect leaves the working connection untouched.
-        await connect(apiKey.trim(), dbName.trim());
-        toast.success(`Connected to ${dbName.trim()}.`);
-      } else {
-        await testConnection();
-        toast.success("Connection verified.");
-      }
+      // connect() verifies the key before replacing the stored one, so a
+      // failed reconnect leaves the working connection untouched.
+      await connect(apiKey.trim(), dbName.trim());
+      toast.success(`Connected to ${dbName.trim()}.`);
       onOpenChange(false);
     } catch (e: any) {
       toast.error(e?.message ?? "Reconnect failed.");

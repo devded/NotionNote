@@ -10,7 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AppConfig, Note, PersistedNotes, SyncStatus, ThemeMode } from "@/types/note";
-import { ensureDatabase } from "@/services/notion/database";
+import { DEFAULT_DB_NAME, ensureDatabase } from "@/services/notion/database";
 import {
   fetchNotes,
   pushCreateNote,
@@ -69,6 +69,7 @@ const emptyPersisted: PersistedNotes = {
 };
 
 const THEME_CLASSES: ThemeMode[] = ["light", "dark", "herdr"];
+const THEMES: ThemeMode[] = ["system", ...THEME_CLASSES];
 
 /** Apply a theme to the document and mirror it so startup can restore
  *  synchronously (before first paint) without waiting on async config I/O. */
@@ -91,7 +92,7 @@ function applyTheme(theme: ThemeMode) {
 export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [config, setConfig] = useState<AppConfig>({
-    database_name: "random_notes_desktop",
+    database_name: DEFAULT_DB_NAME,
     database_id: null,
     data_source_id: null,
     connected: false,
@@ -103,6 +104,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [globalSync, setGlobalSync] = useState<GlobalSyncState>("idle");
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [theme, setThemeState] = useState<ThemeMode>("system");
+  const configRef = useRef(config);
 
   // Mutable mirror so the sync engine always sees fresh data.
   const storeRef = useRef<PersistedNotes>(emptyPersisted);
@@ -297,12 +299,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, [applyPersisted, persistNow, scheduleSync]);
 
-  // Keep refs in sync with state for use inside async engine.
-  const configRef = useRef(config);
-
   // Ref mirrors are updated in effects, never during render.
   useEffect(() => {
-    configRef.current = { ...config };
+    configRef.current = config;
     syncFnRef.current = runSync;
   });
 
@@ -314,19 +313,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const cfg = (await invoke("load_config")) as AppConfig;
         setConfig({ ...cfg });
         configRef.current = { ...cfg };
-        const savedTheme = cfg.theme;
-        if (
-          savedTheme === "light" ||
-          savedTheme === "dark" ||
-          savedTheme === "system" ||
-          savedTheme === "herdr"
-        ) {
-          // "kami" was removed; old configs fall back to "system".
-          setThemeState(savedTheme as ThemeMode);
-          applyTheme(savedTheme as ThemeMode);
-        } else {
-          applyTheme("system");
-        }
+        // Unknown themes (e.g. the removed "kami") fall back to "system".
+        const savedTheme = cfg.theme && THEMES.includes(cfg.theme) ? cfg.theme : "system";
+        setThemeState(savedTheme);
+        applyTheme(savedTheme);
         const saved = parsePersistedNotes(await invoke("load_notes"));
         applyPersisted({
           version: 1,
@@ -368,44 +358,29 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       scheduleSync(100);
     };
     const goOffline = () => setOnline(false);
+    const canSync = () =>
+      document.visibilityState === "visible" && navigator.onLine && configRef.current.connected;
     const onFocus = () => {
-      if (navigator.onLine && configRef.current.connected) {
-        scheduleSync(100);
-      }
-    };
-    const onVisibilityChange = () => {
-      if (
-        document.visibilityState === "visible" &&
-        navigator.onLine &&
-        configRef.current.connected
-      ) {
-        scheduleSync(100);
-      }
+      if (canSync()) scheduleSync(100);
     };
 
     window.addEventListener("online", goOnline);
     window.addEventListener("offline", goOffline);
     window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    document.addEventListener("visibilitychange", onFocus);
 
     // Periodic sync polling to detect Notion edits in background.
     // Skipped while hidden — returning to the app re-triggers a sync via
     // focus/visibilitychange, so nothing is missed.
     const iv = window.setInterval(() => {
-      if (
-        document.visibilityState === "visible" &&
-        navigator.onLine &&
-        configRef.current.connected
-      ) {
-        void runSync();
-      }
+      if (canSync()) void runSync();
     }, 15000);
 
     return () => {
       window.removeEventListener("online", goOnline);
       window.removeEventListener("offline", goOffline);
       window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
+      document.removeEventListener("visibilitychange", onFocus);
       window.clearInterval(iv);
     };
   }, [runSync, scheduleSync]);

@@ -23,15 +23,8 @@ const PersistedNotesSchema = z.object({
   pendingDeletes: z.array(z.string()).catch([]),
 });
 
-/** Future migrations hook here; currently only v1 exists. */
-function migrate(raw: unknown): unknown {
-  // e.g. if ((raw as any)?.version === 1) return upgradeV1toV2(raw);
-  return raw;
-}
-
 export function parsePersistedNotes(raw: unknown): PersistedNotes {
-  const migrated = migrate(raw ?? {});
-  const result = PersistedNotesSchema.safeParse(migrated);
+  const result = PersistedNotesSchema.safeParse(raw ?? {});
   if (!result.success) {
     console.debug("[persistence] notes cache unreadable, starting fresh:", result.error.message);
     return { version: 1, notes: [], pendingDeletes: [] };

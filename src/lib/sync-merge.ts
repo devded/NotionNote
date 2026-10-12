@@ -108,16 +108,10 @@ export function mergeRemoteAndLocal(input: MergeInput): MergeOutput {
       add(local);
     } else {
       // Local was synced; remote is authoritative.
-      const content =
-        r.content !== undefined && r.content !== null && r.content !== ""
-          ? r.content
-          : r.content === ""
-            ? ""
-            : local.content;
       add({
         ...local,
         ...r,
-        content,
+        content: r.content ?? local.content,
         sync_status: "synced",
       });
     }
