@@ -24,7 +24,15 @@ export interface MergeInput {
   pushResults: Map<string, PushResult>;
   /** Page ids whose deletion failed or is queued — must not be resurrected. */
   pendingDeleteIds: string[];
+  /** Current time in ms; injectable for tests. */
+  now?: number;
 }
+
+/**
+ * A synced note missing from the remote query was deleted in Notion. Pages
+ * synced very recently are kept anyway in case the query lags behind.
+ */
+const REMOTE_DELETE_GRACE_MS = 2 * 60_000;
 
 export interface MergeOutput {
   merged: Note[];
@@ -39,7 +47,7 @@ function typedDuringPush(local: Note, info: PushResult): boolean {
 }
 
 export function mergeRemoteAndLocal(input: MergeInput): MergeOutput {
-  const { remote, localNotes, pushResults, pendingDeleteIds } = input;
+  const { remote, localNotes, pushResults, pendingDeleteIds, now = Date.now() } = input;
 
   const merged: Note[] = [];
   let hasMorePending = false;
@@ -132,6 +140,13 @@ export function mergeRemoteAndLocal(input: MergeInput): MergeOutput {
           last_synced_at: pushInfo.lastEditedTime,
           updated_at: pushInfo.lastEditedTime,
         }, true);
+      } else if (
+        local.sync_status === "synced" &&
+        local.notion_page_id &&
+        now - new Date(local.last_synced_at ?? 0).getTime() > REMOTE_DELETE_GRACE_MS
+      ) {
+        // Deleted in Notion: drop the local copy too.
+        continue;
       } else {
         if (local.sync_status !== "synced") hasMorePending = true;
         add(local, true);

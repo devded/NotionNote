@@ -22,7 +22,7 @@ interface NoteEditorProps {
 }
 
 export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
-  const { updateNote } = useNotes();
+  const { updateNote, registerFlush } = useNotes();
   const [title, setTitle] = useState(note?.title ?? "");
   const [content, setContent] = useState(note?.content ?? "");
 
@@ -156,10 +156,15 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
     commit(id, fromSegments(segs.map((s, j) => (j === k ? { ...seg, line: imageLine(seg.ref, width) } : s))));
   };
 
-  // Flush unsaved keystrokes when switching notes or unmounting.
+  // Flush unsaved keystrokes when switching notes or unmounting, and let the
+  // store pull them in before any save or window close.
   useEffect(() => {
-    return () => flushPending();
-  }, [flushPending]);
+    const unregister = registerFlush(flushPending);
+    return () => {
+      unregister();
+      flushPending();
+    };
+  }, [flushPending, registerFlush]);
 
   // Update editor view when remote sync from Notion brings external updates
   // (Only when note is in synced state, never interrupting local in-progress typing)

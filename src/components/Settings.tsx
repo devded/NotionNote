@@ -6,6 +6,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -36,16 +46,19 @@ export function SettingsDialog({
     globalSync,
     online,
     connect,
-    disconnect,
     clearCache,
     testConnection,
     flushSave,
+    syncNow,
+    notes,
   } = useNotes();
 
   const [apiKey, setApiKey] = useState("");
   const [dbName, setDbName] = useState(config.database_name);
   const [testing, setTesting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const unsyncedCount = notes.filter((n) => n.sync_status !== "synced").length;
 
   async function handleTest() {
     setTesting(true);
@@ -67,7 +80,8 @@ export function SettingsDialog({
     setBusy(true);
     try {
       if (apiKey.trim()) {
-        await disconnect();
+        // connect() verifies the key before replacing the stored one, so a
+        // failed reconnect leaves the working connection untouched.
         await connect(apiKey.trim(), dbName.trim());
         toast.success(`Connected to ${dbName.trim()}.`);
       } else {
@@ -84,7 +98,9 @@ export function SettingsDialog({
 
   async function handleClearCache() {
     try {
+      // Push what we can first so as little as possible is lost.
       flushSave();
+      if (online) await syncNow();
       await clearCache();
       toast.success("Local cache cleared. Notes will be pulled from Notion.");
     } catch (e: any) {
@@ -161,12 +177,34 @@ export function SettingsDialog({
               <p className="text-sm font-medium">Synchronization</p>
               <p className="text-xs text-muted-foreground">{statusText}</p>
             </div>
-            <Button variant="destructive" size="sm" onClick={handleClearCache}>
+            <Button variant="destructive" size="sm" onClick={() => setConfirmClear(true)}>
               Clear Local Cache
             </Button>
           </div>
         </div>
       </DialogContent>
+
+      <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear local cache?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Local notes and images are removed and pulled again from Notion.
+              {unsyncedCount > 0 &&
+                ` ${unsyncedCount} note${unsyncedCount === 1 ? " has" : "s have"} changes not yet in Notion. A sync is attempted first; anything that still fails to sync will be lost.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => void handleClearCache()}
+            >
+              Clear
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

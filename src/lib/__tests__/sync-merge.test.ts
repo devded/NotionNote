@@ -152,3 +152,39 @@ describe("mergeRemoteAndLocal", () => {
     expect(merged.map((n) => n.id)).toEqual(["newer", "old"]);
   });
 });
+
+describe("notes deleted in Notion", () => {
+  const now = Date.parse("2026-06-01T12:00:00Z");
+  const synced = (id: string, syncedAt: string) => ({
+    id,
+    title: id,
+    content: "",
+    created_at: syncedAt,
+    updated_at: syncedAt,
+    sync_status: "synced" as const,
+    notion_page_id: `page-${id}`,
+    last_synced_at: syncedAt,
+  });
+
+  it("drops synced notes missing from Notion, but keeps very recent ones", () => {
+    const { merged } = mergeRemoteAndLocal({
+      remote: [],
+      localNotes: [synced("old", "2026-06-01T11:00:00Z"), synced("fresh", "2026-06-01T11:59:30Z")],
+      pushResults: new Map(),
+      pendingDeleteIds: [],
+      now,
+    });
+    expect(merged.map((n) => n.id)).toEqual(["fresh"]);
+  });
+
+  it("keeps unsynced notes even when their page is gone", () => {
+    const { merged } = mergeRemoteAndLocal({
+      remote: [],
+      localNotes: [{ ...synced("edited", "2026-06-01T11:00:00Z"), sync_status: "pending" }],
+      pushResults: new Map(),
+      pendingDeleteIds: [],
+      now,
+    });
+    expect(merged.map((n) => n.id)).toEqual(["edited"]);
+  });
+});
