@@ -94,3 +94,16 @@ describe("image blocks", () => {
     expect(contentToBlocks("![image](https://e.com/i.png)")[0].image.external.url).toBe("https://e.com/i.png");
   });
 });
+
+describe("image widths", () => {
+  it("stores width in the caption and reads it back", () => {
+    const [b] = contentToBlocks("![image|400](local:abc.png)", new Map([["abc.png", "u"]]));
+    expect(b.image.caption[0].text.content).toBe("abc.png|400");
+    const fromNotion = {
+      id: "blk",
+      type: "image",
+      image: { type: "file", file: { url: "https://s3.example/abc.png" }, caption: [{ plain_text: "abc.png|400" }] },
+    };
+    expect(blocksToText([fromNotion])).toBe("![image|400](local:abc.png)");
+  });
+});

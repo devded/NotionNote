@@ -13,7 +13,7 @@ import {
 import { useNotes } from "@/store/notes";
 import { formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { LOCAL_PREFIX, fromSegments, localImageUrl, pasteClipboardImage, saveImage, toSegments } from "@/lib/images";
+import { LOCAL_PREFIX, fromSegments, imageLine, localImageUrl, pasteClipboardImage, saveImage, toSegments } from "@/lib/images";
 import type { Note } from "@/types/note";
 
 interface NoteEditorProps {
@@ -22,7 +22,7 @@ interface NoteEditorProps {
 }
 
 export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
-  const { updateNote } = useNotes();
+  const { updateNote, registerFlush } = useNotes();
   const [title, setTitle] = useState(note?.title ?? "");
   const [content, setContent] = useState(note?.content ?? "");
 
@@ -85,9 +85,34 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
     focusAt(k - 1, prev.text.length);
   };
 
-  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>, index: number) => {
+  /** Save images, then splice them into text segment `index` at [start, end). */
+  const insertImages = async (
+    index: number,
+    start: number,
+    end: number,
+    save: () => Promise<string[]>,
+  ) => {
     if (!note) return;
     const id = note.id;
+    let lines: string[];
+    try {
+      lines = await save();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `Could not add image: ${err}`);
+      return;
+    }
+    // Editor is keyed per note: a null ref means the user switched away.
+    if (lines.length === 0 || !textRefs.current[index]) return;
+    const segs = toSegments(contentRef.current);
+    const seg = segs[index];
+    if (seg?.kind !== "text") return;
+    const text = `${seg.text.slice(0, start)}\n${lines.join("\n")}\n${seg.text.slice(end)}`;
+    commit(id, fromSegments(segs.map((s, j) => (j === index ? { kind: "text", text } : s))));
+    // Caret goes to the start of the text right after the last inserted image.
+    focusAt(index + 2 * lines.length, 0);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>, index: number) => {
     const files = [...e.clipboardData.items]
       .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
       .map((i) => i.getAsFile())
@@ -97,34 +122,49 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
     if (files.length === 0 && e.clipboardData.getData("text/plain")) return;
     e.preventDefault();
     const { selectionStart: start, selectionEnd: end } = e.currentTarget;
-    let lines: string[];
-    try {
-      if (files.length > 0) {
-        lines = await Promise.all(files.map(saveImage));
-      } else {
-        const line = await pasteClipboardImage();
-        if (!line) return;
-        lines = [line];
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : `Could not paste image: ${err}`);
-      return;
-    }
-    // Editor is keyed per note: a null ref means the user switched away.
-    if (!textRefs.current[index]) return;
-    const segs = toSegments(contentRef.current);
-    const seg = segs[index];
-    if (seg?.kind !== "text") return;
-    const text = `${seg.text.slice(0, start)}\n${lines.join("\n")}\n${seg.text.slice(end)}`;
-    commit(id, fromSegments(segs.map((s, j) => (j === index ? { kind: "text", text } : s))));
-    // Caret goes to the start of the text right after the last pasted image.
-    focusAt(index + 2 * lines.length, 0);
+    void insertImages(index, start, end, async () => {
+      if (files.length > 0) return Promise.all(files.map(saveImage));
+      const line = await pasteClipboardImage();
+      return line ? [line] : [];
+    });
   };
 
-  // Flush unsaved keystrokes when switching notes or unmounting.
+  /** Drop on text: at the caret (if focused) or its end; on an image: below it. */
+  const handleDrop = (e: React.DragEvent) => {
+    const files = [...e.dataTransfer.files].filter((f) => f.type.startsWith("image/"));
+    if (files.length === 0) return;
+    e.preventDefault();
+    const target = (e.target as HTMLElement).closest<HTMLElement>("[data-segment]");
+    let index = Number(target?.dataset.segment ?? segments.length - 1);
+    let start = 0;
+    let end = 0;
+    if (segments[index]?.kind === "image") {
+      index += 1;
+    } else {
+      const el = textRefs.current[index];
+      const focused = el && el === document.activeElement;
+      start = focused ? el.selectionStart : (el?.value.length ?? 0);
+      end = focused ? el.selectionEnd : start;
+    }
+    void insertImages(index, start, end, () => Promise.all(files.map(saveImage)));
+  };
+
+  const resizeImage = (id: string, k: number, width: number) => {
+    const segs = toSegments(contentRef.current);
+    const seg = segs[k];
+    if (seg?.kind !== "image") return;
+    commit(id, fromSegments(segs.map((s, j) => (j === k ? { ...seg, line: imageLine(seg.ref, width) } : s))));
+  };
+
+  // Flush unsaved keystrokes when switching notes or unmounting, and let the
+  // store pull them in before any save or window close.
   useEffect(() => {
-    return () => flushPending();
-  }, [flushPending]);
+    const unregister = registerFlush(flushPending);
+    return () => {
+      unregister();
+      flushPending();
+    };
+  }, [flushPending, registerFlush]);
 
   // Update editor view when remote sync from Notion brings external updates
   // (Only when note is in synced state, never interrupting local in-progress typing)
@@ -184,7 +224,11 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
         <Separator className="mx-8 mt-3 w-[calc(100%-4rem)]" />
 
         <div
-          className="flex min-h-0 flex-1 flex-col px-8 py-4 cursor-text"
+          className="flex flex-1 flex-col px-8 py-4 cursor-text"
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+          }}
+          onDrop={handleDrop}
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               textRefs.current[segments.length - 1]?.focus();
@@ -193,10 +237,18 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
         >
           {segments.map((seg, i) =>
             seg.kind === "image" ? (
-              <NoteImage key={`${i}-image`} src={seg.ref} onRemove={() => removeImage(note.id, i)} />
+              <NoteImage
+                key={`${i}-image`}
+                index={i}
+                src={seg.ref}
+                width={seg.width}
+                onRemove={() => removeImage(note.id, i)}
+                onResize={(w) => resizeImage(note.id, i, w)}
+              />
             ) : (
               <Textarea
                 key={`${i}-text`}
+                data-segment={i}
                 ref={(el) => {
                   textRefs.current[i] = el;
                 }}
@@ -216,8 +268,8 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
                 }}
                 onPaste={(e) => handlePaste(e, i)}
                 className={cn(
-                  "min-h-0 w-full resize-none border-none bg-transparent p-0 text-[15.5px] font-normal leading-[1.75] tracking-[-0.005em] text-foreground/90 placeholder:text-muted-foreground/50 shadow-none focus-visible:ring-0",
-                  i === segments.length - 1 && "min-h-24 flex-1",
+                  "min-h-0 w-full shrink-0 resize-none border-none bg-transparent p-0 text-[15.5px] font-normal leading-[1.75] tracking-[-0.005em] text-foreground/90 placeholder:text-muted-foreground/50 shadow-none focus-visible:ring-0",
+                  i === segments.length - 1 && "min-h-24 grow",
                 )}
               />
             ),
@@ -232,7 +284,49 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
   );
 }
 
-function NoteImage({ src, onRemove }: { src: string; onRemove: () => void }) {
+interface NoteImageProps {
+  index: number;
+  src: string;
+  width?: number;
+  onRemove: () => void;
+  onResize: (width: number) => void;
+}
+
+const MIN_IMAGE_WIDTH = 80;
+
+function NoteImage({ index, src, width, onRemove, onResize }: NoteImageProps) {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  /** Live width while dragging; committed to the note on release. */
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+
+  const startResize = (e: React.PointerEvent) => {
+    const frame = frameRef.current;
+    const parent = frame?.parentElement;
+    if (!frame || !parent) return;
+    e.preventDefault();
+    const cs = getComputedStyle(parent);
+    const maxWidth = parent.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const startX = e.clientX;
+    const startWidth = frame.getBoundingClientRect().width;
+    let next = Math.round(startWidth);
+    const move = (ev: PointerEvent) => {
+      next = Math.round(Math.min(maxWidth, Math.max(MIN_IMAGE_WIDTH, startWidth + ev.clientX - startX)));
+      setDragWidth(next);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
+      setDragWidth(null);
+      if (next !== Math.round(startWidth)) onResize(next);
+    };
+    document.body.style.cursor = "ew-resize";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const shownWidth = dragWidth ?? width;
+
   const [url, setUrl] = useState<string | null>(src.startsWith(LOCAL_PREFIX) ? null : src);
   const [failed, setFailed] = useState(false);
 
@@ -254,7 +348,12 @@ function NoteImage({ src, onRemove }: { src: string; onRemove: () => void }) {
   }, [src]);
 
   return (
-    <div className="group relative my-2 self-start rounded-lg border bg-muted/40 p-1">
+    <div
+      ref={frameRef}
+      data-segment={index}
+      style={shownWidth ? { width: shownWidth } : undefined}
+      className="group relative my-2 max-w-full shrink-0 self-start rounded-lg border bg-muted/40 p-1"
+    >
       {failed ? (
         <div className="px-3 py-2 text-xs text-muted-foreground">Image unavailable</div>
       ) : url ? (
@@ -262,7 +361,11 @@ function NoteImage({ src, onRemove }: { src: string; onRemove: () => void }) {
           src={url}
           alt=""
           onError={() => setFailed(true)}
-          className="block max-h-[28rem] max-w-full rounded-md object-contain"
+          draggable={false}
+          className={cn(
+            "block rounded-md object-contain",
+            shownWidth ? "h-auto w-full" : "max-h-[28rem] max-w-full",
+          )}
         />
       ) : (
         <div className="size-24" />
@@ -276,6 +379,18 @@ function NoteImage({ src, onRemove }: { src: string; onRemove: () => void }) {
       >
         <X className="size-4" />
       </Button>
+      {url && !failed && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize image"
+          onPointerDown={startResize}
+          className={cn(
+            "absolute top-1/2 -right-1.5 h-10 w-1.5 -translate-y-1/2 cursor-ew-resize rounded-full bg-foreground/50 transition-opacity",
+            dragWidth ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}
+        />
+      )}
     </div>
   );
 }

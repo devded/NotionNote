@@ -22,21 +22,14 @@ describe("formatRelative", () => {
 describe("dateGroup", () => {
   it("buckets timestamps into the documented labels", () => {
     const now = new Date();
-    const iso = (d: Date) => d.toISOString();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const iso = (ms: number) => new Date(ms).toISOString();
 
-    expect(dateGroup(iso(now))).toBe("Today");
-    expect(
-      dateGroup(iso(new Date(now.getTime() - 12 * 3_600_000))),
-    ).toBe("Yesterday");
-    expect(
-      dateGroup(iso(new Date(now.getTime() - 5 * 86_400_000))),
-    ).toBe("Previous 7 days");
-    expect(
-      dateGroup(iso(new Date(now.getTime() - 20 * 86_400_000))),
-    ).toBe("Previous 30 days");
-    expect(
-      dateGroup(iso(new Date(now.getTime() - 90 * 86_400_000))),
-    ).toBe("Older");
+    expect(dateGroup(now.toISOString())).toBe("Today");
+    expect(dateGroup(iso(startOfToday - 3_600_000))).toBe("Yesterday");
+    expect(dateGroup(iso(startOfToday - 5 * 86_400_000))).toBe("Previous 7 days");
+    expect(dateGroup(iso(startOfToday - 20 * 86_400_000))).toBe("Previous 30 days");
+    expect(dateGroup(iso(startOfToday - 90 * 86_400_000))).toBe("Older");
   });
 
   it("puts the exact boundary of midnight at Today/Yesterday correctly", () => {

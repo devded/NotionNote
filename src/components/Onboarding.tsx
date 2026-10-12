@@ -30,13 +30,8 @@ export function Onboarding({ onConnected }: { onConnected: () => void }) {
     if (!apiKey.trim()) return;
     setError(null);
     try {
-      setActive("Verifying API key…");
-      await tick();
-      setActive(`Searching for ${dbName}…`);
-      await tick(150);
-      const result = await connect(apiKey.trim(), dbName.trim() || DEFAULT_DB_NAME);
-      setActive("Loading notes…");
-      await tick(result.existed ? 200 : 500);
+      setActive(`Connecting to ${dbName.trim() || DEFAULT_DB_NAME}…`);
+      await connect(apiKey.trim(), dbName.trim() || DEFAULT_DB_NAME);
       setActive(null);
       setConnectedName(dbName.trim() || DEFAULT_DB_NAME);
     } catch (err: any) {
@@ -119,8 +114,4 @@ export function Onboarding({ onConnected }: { onConnected: () => void }) {
       </form>
     </div>
   );
-}
-
-function tick(ms = 50): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }

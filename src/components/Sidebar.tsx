@@ -1,8 +1,9 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { dateGroup } from "@/lib/format";
+import { stripImages } from "@/lib/images";
 import { useNotes } from "@/store/notes";
 import { NoteStatusIcon } from "./SyncStatus";
 import type { Note } from "@/types/note";
@@ -11,10 +12,7 @@ interface SidebarProps {
   searchRef: React.RefObject<HTMLInputElement | null>;
 }
 
-export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar(
-  { searchRef },
-  ref,
-) {
+export function Sidebar({ searchRef }: SidebarProps) {
   const { notes, query, setQuery, select, selectedId } = useNotes();
 
   // Local input state keeps typing instant; the (expensive) store-wide query
@@ -34,7 +32,7 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar
     const filtered = notes.filter((n) => {
       if (!query.trim()) return true;
       const q = query.toLowerCase();
-      return n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q);
+      return n.title.toLowerCase().includes(q) || stripImages(n.content).toLowerCase().includes(q);
     });
 
     // Sort newest-first and group by date.
@@ -54,7 +52,7 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar
   }, [notes, query]);
 
   return (
-    <div ref={ref} className="flex h-full min-w-0 flex-col bg-sidebar text-sidebar-foreground">
+    <div className="flex h-full min-w-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="p-3 pb-2">
         <div className="relative" role="search">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -97,7 +95,7 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(function Sidebar
       </div>
     </div>
   );
-});
+}
 
 function NoteItem({
   note,
