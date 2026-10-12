@@ -3,11 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 /**
  * Images live in note content as their own line: `![image](local:<name>)` for
  * files in the app's image store, or `![image](https://…)` for external URLs.
+ * An optional display width uses Obsidian's syntax: `![image|400](…)`.
  */
-export const IMAGE_LINE = /^!\[[^\]]*\]\((\S+)\)$/;
+const IMAGE_LINE = /^!\[([^\]]*)\]\((\S+)\)$/;
 export const LOCAL_PREFIX = "local:";
-/** Mirrors the Rust-side validation in `image_path`. */
-export const IMAGE_NAME = /^[A-Za-z0-9-]+\.(png|jpg|gif|webp)$/;
 
 const EXT_BY_MIME: Record<string, string> = {
   "image/png": "png",
@@ -15,12 +14,28 @@ const EXT_BY_MIME: Record<string, string> = {
   "image/gif": "gif",
   "image/webp": "webp",
 };
-export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+
+export interface ImageInfo {
+  ref: string;
+  width?: number;
+}
+
+export function parseImageLine(line: string): ImageInfo | null {
+  const m = line.trim().match(IMAGE_LINE);
+  if (!m) return null;
+  const width = Number(m[1].match(/\|(\d+)$/)?.[1]);
+  return width > 0 ? { ref: m[2], width } : { ref: m[2] };
+}
+
+export function imageLine(ref: string, width?: number): string {
+  return `![image${width ? `|${width}` : ""}](${ref})`;
+}
 
 export function imageRefs(content: string): string[] {
   return content
     .split("\n")
-    .map((l) => l.trim().match(IMAGE_LINE)?.[1])
+    .map((l) => parseImageLine(l)?.ref)
     .filter((r): r is string => !!r);
 }
 
@@ -33,7 +48,7 @@ export async function saveImage(file: File): Promise<string> {
   await invoke("save_image", new Uint8Array(await file.arrayBuffer()), {
     headers: { "x-name": name },
   });
-  return `![image](${LOCAL_PREFIX}${name})`;
+  return imageLine(LOCAL_PREFIX + name);
 }
 
 /**
@@ -43,7 +58,7 @@ export async function saveImage(file: File): Promise<string> {
 export async function pasteClipboardImage(): Promise<string | null> {
   const name = `${crypto.randomUUID()}.png`;
   const found = await invoke<boolean>("paste_clipboard_image", { name });
-  return found ? `![image](${LOCAL_PREFIX}${name})` : null;
+  return found ? imageLine(LOCAL_PREFIX + name) : null;
 }
 
 /** Object URL for a local image; caller revokes it. */
@@ -54,7 +69,7 @@ export async function localImageUrl(name: string): Promise<string> {
 
 export type Segment =
   | { kind: "text"; text: string }
-  | { kind: "image"; line: string; ref: string };
+  | ({ kind: "image"; line: string } & ImageInfo);
 
 /**
  * Split content into alternating text/image segments for inline display.
@@ -65,12 +80,12 @@ export function toSegments(content: string): Segment[] {
   const segs: Segment[] = [];
   let buf: string[] = [];
   for (const line of content.split("\n")) {
-    const ref = line.trim().match(IMAGE_LINE)?.[1];
-    if (!ref) {
+    const image = parseImageLine(line);
+    if (!image) {
       buf.push(line);
       continue;
     }
-    segs.push({ kind: "text", text: buf.join("\n") }, { kind: "image", line: line.trim(), ref });
+    segs.push({ kind: "text", text: buf.join("\n") }, { kind: "image", line: line.trim(), ...image });
     buf = [];
   }
   segs.push({ kind: "text", text: buf.join("\n") });

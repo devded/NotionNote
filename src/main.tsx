@@ -25,6 +25,15 @@ import "@/index.css";
   }
 })();
 
+// Native file drops are disabled (tauri.conf.json) so the editor gets real
+// File objects; any file dropped outside the editor must not navigate away.
+// Only file drags are blocked, so dragging text within the app still works.
+for (const type of ["dragover", "drop"] as const) {
+  window.addEventListener(type, (e) => {
+    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+  });
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <NotesProvider>
