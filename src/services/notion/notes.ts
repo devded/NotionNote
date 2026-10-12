@@ -140,8 +140,6 @@ async function downloadImages(blocks: any[]): Promise<void> {
 /** Upload every local image referenced in content; name -> file_upload id. */
 async function uploadImages(content: string): Promise<Map<string, string>> {
   const uploads = new Map<string, string>();
-  // ponytail: every body rewrite re-uploads all of the note's images (blocks
-  // are replaced wholesale); diff blocks in place if notes get image-heavy.
   for (const ref of imageRefs(content)) {
     const name = ref.slice(LOCAL_PREFIX.length);
     if (!ref.startsWith(LOCAL_PREFIX) || uploads.has(name)) continue;
@@ -189,22 +187,36 @@ export function blocksToText(blocks: any[]): string {
   return lines.join("\n");
 }
 
-async function fetchPageContent(pageId: string): Promise<string> {
-  const lines: string[] = [];
+/** All live top-level blocks of a page. */
+async function listChildren(pageId: string): Promise<any[]> {
+  const blocks: any[] = [];
   let cursor: string | undefined;
   do {
     const res: any = await notionRequest(
       "GET",
       `/blocks/${pageId}/children?page_size=100${cursor ? `&start_cursor=${cursor}` : ""}`,
     );
-    await downloadImages(res?.results ?? []);
-    const chunk = blocksToText(res?.results ?? []);
-    if (chunk.length > 0) {
-      lines.push(chunk);
+    for (const b of res?.results ?? []) {
+      if (!b.archived && !b.in_trash) blocks.push(b);
     }
     cursor = res?.has_more ? res?.next_cursor ?? undefined : undefined;
   } while (cursor);
-  return lines.join("\n");
+  return blocks;
+}
+
+/** Append blocks in chunks of 100 (Notion's per-request limit). */
+async function appendBlocks(pageId: string, blocks: any[]): Promise<void> {
+  for (let i = 0; i < blocks.length; i += 100) {
+    await notionRequest("PATCH", `/blocks/${pageId}/children`, {
+      children: blocks.slice(i, i + 100),
+    });
+  }
+}
+
+async function fetchPageContent(pageId: string): Promise<string> {
+  const blocks = await listChildren(pageId);
+  await downloadImages(blocks);
+  return blocksToText(blocks);
 }
 
 /**
@@ -218,7 +230,7 @@ export function contentToBlocks(content: string, uploads?: Map<string, string>):
   const mk = (type: string, text: string) => ({
     object: "block",
     type,
-    [type]: { rich_text: [{ type: "text", text: { content: text } }] },
+    [type]: { rich_text: plainToRichText(text) },
   });
   for (const raw of content.split("\n")) {
     const line = raw.replace(/\s+$/, "");
@@ -276,20 +288,10 @@ const DELETE_CONCURRENCY = 3;
 
 async function syncPageBlocks(pageId: string, content: string) {
   // 1. Fetch old blocks: their ids (for deletion) and text (for diffing).
-  const old: { id: string; line: string }[] = [];
-  let cursor: string | undefined;
-  do {
-    const res: any = await notionRequest(
-      "GET",
-      `/blocks/${pageId}/children?page_size=100${cursor ? `&start_cursor=${cursor}` : ""}`,
-    );
-    for (const b of res?.results ?? []) {
-      if (!b.archived && !b.in_trash) {
-        old.push({ id: b.id, line: blocksToText([b]).replace(/\s+$/, "") });
-      }
-    }
-    cursor = res?.has_more ? res?.next_cursor ?? undefined : undefined;
-  } while (cursor);
+  const old = (await listChildren(pageId)).map((b) => ({
+    id: b.id,
+    line: blocksToText([b]).replace(/\s+$/, ""),
+  }));
 
   // 2. Keep the longest unchanged prefix of blocks. Typing usually happens
   //    near the end, so this turns "rewrite every block" into a handful of
@@ -311,12 +313,7 @@ async function syncPageBlocks(pageId: string, content: string) {
 
   // 3. Append the new tail FIRST so the page is never missing content.
   const tail = lines.slice(n).join("\n");
-  const blocks = contentToBlocks(tail, await uploadImages(tail));
-  for (let i = 0; i < blocks.length; i += 100) {
-    await notionRequest("PATCH", `/blocks/${pageId}/children`, {
-      children: blocks.slice(i, i + 100),
-    });
-  }
+  await appendBlocks(pageId, contentToBlocks(tail, await uploadImages(tail)));
   const oldBlockIds = old.slice(o).map((b) => b.id);
 
   // 4. Delete old blocks in small concurrent batches.
@@ -326,17 +323,14 @@ async function syncPageBlocks(pageId: string, content: string) {
     const settled = await Promise.allSettled(
       batch.map((id) => notionRequest("DELETE", `/blocks/${id}`)),
     );
-    for (let j = 0; j < settled.length; j++) {
-      if (settled[j].status === "fulfilled") continue;
-      failedDeletes++;
+    settled.forEach((r, j) => {
+      if (r.status === "fulfilled") return;
       // 404 just means the block was already gone — not a real failure.
-      const err: any = (settled[j] as PromiseRejectedResult).reason;
-      if (err?.code !== "http_404" && err?.code !== "not_found") {
-        console.debug("[notion] failed to delete old block:", batch[j], err?.message ?? err);
-      } else {
-        failedDeletes--;
-      }
-    }
+      const err: any = r.reason;
+      if (err?.code === "http_404" || err?.code === "not_found") return;
+      failedDeletes++;
+      console.debug("[notion] failed to delete old block:", batch[j], err?.message ?? err);
+    });
   }
   if (failedDeletes > 0) {
     // Surface the duplication risk instead of silently leaving duplicates.
@@ -355,14 +349,7 @@ export async function pushCreateNote(
     parent: { type: "data_source_id", data_source_id: dataSourceId },
     properties: noteProperties(note),
   });
-  const blocks = contentToBlocks(note.content, uploads);
-  if (blocks.length > 0) {
-    for (let i = 0; i < blocks.length; i += 100) {
-      await notionRequest("PATCH", `/blocks/${page.id}/children`, {
-        children: blocks.slice(i, i + 100),
-      });
-    }
-  }
+  await appendBlocks(page.id, contentToBlocks(note.content, uploads));
   return {
     pageId: page.id,
     lastEditedTime: page.last_edited_time ?? new Date().toISOString(),
@@ -373,16 +360,14 @@ export async function pushCreateNote(
 export async function pushUpdateNote(
   note: Note,
 ): Promise<{ lastEditedTime: string }> {
-  // Atomic page property update ensures Title, Content, and Updated At are saved immediately
-  const page = await notionRequest<any>("PATCH", `/pages/${note.notion_page_id}`, {
+  const pageId = note.notion_page_id!;
+  const page = await notionRequest<any>("PATCH", `/pages/${pageId}`, {
     properties: noteProperties(note),
   });
-  if (note.notion_page_id) {
-    // Deliberately NOT swallowed: if block sync fails, the local note must
-    // stay unsynced so the merge engine retries it instead of silently
-    // leaving duplicated/stale blocks behind forever.
-    await syncPageBlocks(note.notion_page_id, note.content);
-  }
+  // Deliberately NOT swallowed: if block sync fails, the local note must
+  // stay unsynced so the merge engine retries it instead of silently
+  // leaving duplicated/stale blocks behind forever.
+  await syncPageBlocks(pageId, note.content);
   return {
     lastEditedTime: page?.last_edited_time ?? new Date().toISOString(),
   };

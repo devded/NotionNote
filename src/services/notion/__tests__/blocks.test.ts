@@ -23,6 +23,11 @@ describe("contentToBlocks", () => {
     expect(contentToBlocks("")).toEqual([]);
     expect(contentToBlocks("\n \n")).toEqual([]);
   });
+
+  it("splits lines longer than Notion's 2000-char rich_text limit", () => {
+    const [block] = contentToBlocks("x".repeat(4500));
+    expect(block.paragraph.rich_text.map((r: any) => r.text.content.length)).toEqual([2000, 2000, 500]);
+  });
 });
 
 describe("blocksToText round-trip", () => {

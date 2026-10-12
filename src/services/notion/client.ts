@@ -100,5 +100,5 @@ export function plainToRichText(text: string): any[] {
   for (let i = 0; i < text.length; i += 2000) {
     chunks.push({ type: "text", text: { content: text.slice(i, i + 2000) } });
   }
-  return chunks.length > 0 ? chunks : [];
+  return chunks;
 }

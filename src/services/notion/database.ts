@@ -3,7 +3,7 @@ import type { ConnectResult } from "@/types/note";
 
 export const DEFAULT_DB_NAME = "random_notes_desktop";
 
-export interface DataSourceRef {
+interface DataSourceRef {
   databaseId: string;
   dataSourceId: string;
 }
@@ -36,7 +36,7 @@ const REQUIRED_PROPERTIES: Record<string, Record<string, any>> = {
  * types. Adds missing properties when possible; throws a clear error when a
  * property exists but has an incompatible type.
  */
-export async function ensureProperties(dataSourceId: string): Promise<string[]> {
+async function ensureProperties(dataSourceId: string): Promise<string[]> {
   const ds = await notionRequest<any>("GET", `/data_sources/${dataSourceId}`);
   const props: Record<string, any> = ds?.properties ?? {};
 
@@ -63,7 +63,7 @@ export async function ensureProperties(dataSourceId: string): Promise<string[]> 
 }
 
 /** Find an accessible parent page, preferring one named "Notes". */
-export async function findParentPage(): Promise<{ pageId: string; title: string }> {
+async function findParentPage(): Promise<{ pageId: string; title: string }> {
   const res = await notionRequest<any>("POST", "/search", {
     filter: { property: "object", value: "page" },
     page_size: 100,
@@ -93,7 +93,7 @@ export async function findParentPage(): Promise<{ pageId: string; title: string 
 }
 
 /** Create the database with its initial data source and required properties. */
-export async function createDatabase(name: string): Promise<DataSourceRef> {
+async function createDatabase(name: string): Promise<DataSourceRef> {
   const parent = await findParentPage();
   const db = await notionRequest<any>("POST", "/databases", {
     parent: { type: "page_id", page_id: parent.pageId },
