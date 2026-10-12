@@ -62,17 +62,21 @@ function friendlyError(payload: any): NotionError {
 }
 
 /** Perform an authenticated Notion API request through the Tauri backend. */
-export async function notionRequest<T = any>(
+export function notionRequest<T = any>(
   method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
 ): Promise<T> {
+  return notionInvoke<T>("notion_request", { method, path, body: body ?? null });
+}
+
+/** Invoke a Notion-backed Tauri command with friendly error mapping. */
+export async function notionInvoke<T = any>(
+  cmd: string,
+  args: Record<string, unknown>,
+): Promise<T> {
   try {
-    return await invoke<Value>("notion_request", {
-      method,
-      path,
-      body: body ?? null,
-    }) as T;
+    return await invoke<T>(cmd, args);
   } catch (e) {
     let payload: any;
     try {
@@ -83,8 +87,6 @@ export async function notionRequest<T = any>(
     throw friendlyError(payload);
   }
 }
-
-type Value = unknown;
 
 // Shared helpers -----------------------------------------------------------
 

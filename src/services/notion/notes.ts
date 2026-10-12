@@ -1,4 +1,5 @@
-import { notionRequest, richTextToPlain, plainToRichText } from "./client";
+import { notionInvoke, notionRequest, richTextToPlain, plainToRichText } from "./client";
+import { IMAGE_LINE, IMAGE_NAME, LOCAL_PREFIX, imageRefs } from "@/lib/images";
 import type { Note } from "@/types/note";
 
 function pageToNote(page: any): Note {
@@ -91,6 +92,48 @@ export async function fetchNotes(
   return notes;
 }
 
+/**
+ * Local image name for a Notion image block. Images we upload carry their
+ * local name as the caption so they round-trip to the same text; images added
+ * in Notion get a stable name derived from the block id.
+ */
+function notionImageName(b: any): string {
+  const caption = richTextToPlain(b.image?.caption);
+  if (IMAGE_NAME.test(caption)) return caption;
+  const ext = (b.image?.file?.url ?? "").split("?")[0].match(/\.(png|jpg|gif|webp)$/i)?.[1];
+  return `${b.id}.${ext?.toLowerCase() ?? "png"}`;
+}
+
+function imageBlockRef(b: any): string | null {
+  if (b.image?.type === "external") return b.image.external?.url ?? null;
+  return b.image?.file?.url ? LOCAL_PREFIX + notionImageName(b) : null;
+}
+
+/** Pull Notion-hosted images we don't have yet into the local store. */
+async function downloadImages(blocks: any[]): Promise<void> {
+  for (const b of blocks) {
+    if (b.type !== "image" || b.image?.type !== "file" || !b.image.file?.url) continue;
+    try {
+      await notionInvoke("download_image", { name: notionImageName(b), url: b.image.file.url });
+    } catch (e) {
+      console.debug("[notion] failed to download image", b.id, e);
+    }
+  }
+}
+
+/** Upload every local image referenced in content; name -> file_upload id. */
+async function uploadImages(content: string): Promise<Map<string, string>> {
+  const uploads = new Map<string, string>();
+  // ponytail: every body rewrite re-uploads all of the note's images (blocks
+  // are replaced wholesale); diff blocks in place if notes get image-heavy.
+  for (const ref of imageRefs(content)) {
+    const name = ref.slice(LOCAL_PREFIX.length);
+    if (!ref.startsWith(LOCAL_PREFIX) || uploads.has(name)) continue;
+    uploads.set(name, await notionInvoke<string>("notion_upload_image", { name }));
+  }
+  return uploads;
+}
+
 export function blocksToText(blocks: any[]): string {
   const lines: string[] = [];
   for (const b of blocks) {
@@ -100,6 +143,11 @@ export function blocksToText(blocks: any[]): string {
       .map((r) => r.plain_text ?? r.text?.content ?? "")
       .join("");
     switch (b.type) {
+      case "image": {
+        const ref = imageBlockRef(b);
+        if (ref) lines.push(`![image](${ref})`);
+        break;
+      }
       case "heading_1":
         lines.push(`# ${text}`);
         break;
@@ -133,6 +181,7 @@ async function fetchPageContent(pageId: string): Promise<string> {
       "GET",
       `/blocks/${pageId}/children?page_size=100${cursor ? `&start_cursor=${cursor}` : ""}`,
     );
+    await downloadImages(res?.results ?? []);
     const chunk = blocksToText(res?.results ?? []);
     if (chunk.length > 0) {
       lines.push(chunk);
@@ -145,9 +194,10 @@ async function fetchPageContent(pageId: string): Promise<string> {
 /**
  * Convert plain-text/markdown-lite content into Notion blocks.
  * Supported: # ## ### headings, - bullets, 1. numbered items, > quotes,
- * everything else becomes a paragraph. Blank lines are dropped.
+ * `![](…)` image lines, everything else becomes a paragraph. Blank lines are
+ * dropped. Local images need their file_upload id in `uploads`.
  */
-export function contentToBlocks(content: string): any[] {
+export function contentToBlocks(content: string, uploads?: Map<string, string>): any[] {
   const blocks: any[] = [];
   const mk = (type: string, text: string) => ({
     object: "block",
@@ -157,7 +207,9 @@ export function contentToBlocks(content: string): any[] {
   for (const raw of content.split("\n")) {
     const line = raw.replace(/\s+$/, "");
     if (!line.trim()) continue;
-    if (line.startsWith("### ")) blocks.push(mk("heading_3", line.slice(4)));
+    const image = imageBlock(line.trim().match(IMAGE_LINE)?.[1], uploads);
+    if (image) blocks.push(image);
+    else if (line.startsWith("### ")) blocks.push(mk("heading_3", line.slice(4)));
     else if (line.startsWith("## ")) blocks.push(mk("heading_2", line.slice(3)));
     else if (line.startsWith("# ")) blocks.push(mk("heading_1", line.slice(2)));
     else if (line.startsWith("- ")) blocks.push(mk("bulleted_list_item", line.slice(2)));
@@ -166,6 +218,25 @@ export function contentToBlocks(content: string): any[] {
     else blocks.push(mk("paragraph", line));
   }
   return blocks;
+}
+
+function imageBlock(ref: string | undefined, uploads?: Map<string, string>): any {
+  if (!ref) return null;
+  if (/^https?:\/\//.test(ref)) {
+    return { object: "block", type: "image", image: { type: "external", external: { url: ref } } };
+  }
+  const name = ref.slice(LOCAL_PREFIX.length);
+  const id = ref.startsWith(LOCAL_PREFIX) ? uploads?.get(name) : undefined;
+  if (!id) return null;
+  return {
+    object: "block",
+    type: "image",
+    image: {
+      type: "file_upload",
+      file_upload: { id },
+      caption: [{ type: "text", text: { content: name } }],
+    },
+  };
 }
 
 /**
@@ -214,7 +285,7 @@ async function syncPageBlocks(pageId: string, content: string) {
   }
 
   // 3. Append new blocks FIRST so the page is never empty mid-update.
-  const blocks = contentToBlocks(content);
+  const blocks = contentToBlocks(content, await uploadImages(content));
   if (blocks.length > 0) {
     for (let i = 0; i < blocks.length; i += 100) {
       await notionRequest("PATCH", `/blocks/${pageId}/children`, {
@@ -253,11 +324,13 @@ export async function pushCreateNote(
   dataSourceId: string,
   note: Note,
 ): Promise<{ pageId: string; lastEditedTime: string }> {
+  // Upload first: a failed upload must not leave a half-created page behind.
+  const uploads = await uploadImages(note.content);
   const page = await notionRequest<any>("POST", "/pages", {
     parent: { type: "data_source_id", data_source_id: dataSourceId },
     properties: noteProperties(note),
   });
-  const blocks = contentToBlocks(note.content);
+  const blocks = contentToBlocks(note.content, uploads);
   if (blocks.length > 0) {
     for (let i = 0; i < blocks.length; i += 100) {
       await notionRequest("PATCH", `/blocks/${page.id}/children`, {
