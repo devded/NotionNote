@@ -8,15 +8,6 @@ export interface DataSourceRef {
   dataSourceId: string;
 }
 
-/** Verify the API key by fetching the integration bot user. */
-export async function verifyApiKey(): Promise<{ name: string }> {
-  const me = await notionRequest<any>("GET", "/users/me");
-  if (me?.type !== "bot" && !me?.bot) {
-    throw new NotionError("unauthorized", "This key does not belong to a Notion integration.");
-  }
-  return { name: me.name ?? "Notion Integration" };
-}
-
 function dataSourceTitle(ds: any): string {
   return richTextToPlain(ds?.title);
 }

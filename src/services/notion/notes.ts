@@ -1,5 +1,5 @@
 import { notionInvoke, notionRequest, richTextToPlain, plainToRichText } from "./client";
-import { IMAGE_LINE, IMAGE_NAME, LOCAL_PREFIX, imageRefs } from "@/lib/images";
+import { LOCAL_PREFIX, imageLine, imageRefs, parseImageLine, type ImageInfo } from "@/lib/images";
 import type { Note } from "@/types/note";
 
 function pageToNote(page: any): Note {
@@ -93,20 +93,31 @@ export async function fetchNotes(
 }
 
 /**
- * Local image name for a Notion image block. Images we upload carry their
- * local name as the caption so they round-trip to the same text; images added
- * in Notion get a stable name derived from the block id.
+ * Images we upload carry `<local name>|<width>` as their Notion caption (both
+ * parts optional) so they round-trip to the same text line. The name format
+ * mirrors the Rust-side validation in `image_path`.
  */
+const CAPTION = /^([A-Za-z0-9-]+\.(?:png|jpg|gif|webp))?(?:\|(\d+))?$/;
+
+function parseCaption(b: any): { name?: string; width?: number } {
+  const m = richTextToPlain(b.image?.caption).match(CAPTION);
+  return { name: m?.[1], width: m?.[2] ? Number(m[2]) : undefined };
+}
+
+/** Local image name; images added in Notion get one derived from the block id. */
 function notionImageName(b: any): string {
-  const caption = richTextToPlain(b.image?.caption);
-  if (IMAGE_NAME.test(caption)) return caption;
+  const name = parseCaption(b).name;
+  if (name) return name;
   const ext = (b.image?.file?.url ?? "").split("?")[0].match(/\.(png|jpg|gif|webp)$/i)?.[1];
   return `${b.id}.${ext?.toLowerCase() ?? "png"}`;
 }
 
-function imageBlockRef(b: any): string | null {
-  if (b.image?.type === "external") return b.image.external?.url ?? null;
-  return b.image?.file?.url ? LOCAL_PREFIX + notionImageName(b) : null;
+function imageBlockLine(b: any): string | null {
+  const { width } = parseCaption(b);
+  if (b.image?.type === "external") {
+    return b.image.external?.url ? imageLine(b.image.external.url, width) : null;
+  }
+  return b.image?.file?.url ? imageLine(LOCAL_PREFIX + notionImageName(b), width) : null;
 }
 
 /** Pull Notion-hosted images we don't have yet into the local store. */
@@ -144,8 +155,8 @@ export function blocksToText(blocks: any[]): string {
       .join("");
     switch (b.type) {
       case "image": {
-        const ref = imageBlockRef(b);
-        if (ref) lines.push(`![image](${ref})`);
+        const line = imageBlockLine(b);
+        if (line) lines.push(line);
         break;
       }
       case "heading_1":
@@ -207,7 +218,7 @@ export function contentToBlocks(content: string, uploads?: Map<string, string>):
   for (const raw of content.split("\n")) {
     const line = raw.replace(/\s+$/, "");
     if (!line.trim()) continue;
-    const image = imageBlock(line.trim().match(IMAGE_LINE)?.[1], uploads);
+    const image = imageBlock(parseImageLine(line), uploads);
     if (image) blocks.push(image);
     else if (line.startsWith("### ")) blocks.push(mk("heading_3", line.slice(4)));
     else if (line.startsWith("## ")) blocks.push(mk("heading_2", line.slice(3)));
@@ -220,10 +231,17 @@ export function contentToBlocks(content: string, uploads?: Map<string, string>):
   return blocks;
 }
 
-function imageBlock(ref: string | undefined, uploads?: Map<string, string>): any {
-  if (!ref) return null;
+function imageBlock(image: ImageInfo | null, uploads?: Map<string, string>): any {
+  if (!image) return null;
+  const { ref, width } = image;
+  const caption = (text: string) => (text ? [{ type: "text", text: { content: text } }] : []);
+  const suffix = width ? `|${width}` : "";
   if (/^https?:\/\//.test(ref)) {
-    return { object: "block", type: "image", image: { type: "external", external: { url: ref } } };
+    return {
+      object: "block",
+      type: "image",
+      image: { type: "external", external: { url: ref }, caption: caption(suffix) },
+    };
   }
   const name = ref.slice(LOCAL_PREFIX.length);
   const id = ref.startsWith(LOCAL_PREFIX) ? uploads?.get(name) : undefined;
@@ -231,11 +249,7 @@ function imageBlock(ref: string | undefined, uploads?: Map<string, string>): any
   return {
     object: "block",
     type: "image",
-    image: {
-      type: "file_upload",
-      file_upload: { id },
-      caption: [{ type: "text", text: { content: name } }],
-    },
+    image: { type: "file_upload", file_upload: { id }, caption: caption(name + suffix) },
   };
 }
 
@@ -256,43 +270,49 @@ export function normalizeForCompare(text: string): string {
 const DELETE_CONCURRENCY = 3;
 
 async function syncPageBlocks(pageId: string, content: string) {
-  // 1. Fetch old blocks — their IDs for deletion, and their text so we can
-  //    detect that nothing actually changed.
-  const oldBlockIds: string[] = [];
-  const existingLines: string[] = [];
+  // 1. Fetch old blocks: their ids (for deletion) and text (for diffing).
+  const old: { id: string; line: string }[] = [];
   let cursor: string | undefined;
   do {
     const res: any = await notionRequest(
       "GET",
       `/blocks/${pageId}/children?page_size=100${cursor ? `&start_cursor=${cursor}` : ""}`,
     );
-    const results: any[] = res?.results ?? [];
-    const text = blocksToText(results);
-    if (text) existingLines.push(text);
-    for (const b of results) {
+    for (const b of res?.results ?? []) {
       if (!b.archived && !b.in_trash) {
-        oldBlockIds.push(b.id);
+        old.push({ id: b.id, line: blocksToText([b]).replace(/\s+$/, "") });
       }
     }
     cursor = res?.has_more ? res?.next_cursor ?? undefined : undefined;
   } while (cursor);
 
-  // 2. Skip the entire fetch-append-delete cycle when Notion already matches.
-  //    This turns repeat updates of unchanged content into a single GET.
-  const existingText = existingLines.join("\n");
-  if (normalizeForCompare(content) === normalizeForCompare(existingText)) {
-    return;
+  // 2. Keep the longest unchanged prefix of blocks. Typing usually happens
+  //    near the end, so this turns "rewrite every block" into a handful of
+  //    requests, and images above the edit are never re-uploaded. Blank
+  //    Notion blocks have no local counterpart and are skipped over.
+  // ponytail: prefix only; an edit near the top still rewrites everything
+  // below it. Add suffix matching via Notion's `position` insert if needed.
+  const lines = normalizeForCompare(content).split("\n").filter(Boolean);
+  let o = 0;
+  let n = 0;
+  while (o < old.length) {
+    if (!old[o].line.trim()) o++;
+    else if (n < lines.length && old[o].line === lines[n]) {
+      o++;
+      n++;
+    } else break;
   }
+  if (o === old.length && n === lines.length) return;
 
-  // 3. Append new blocks FIRST so the page is never empty mid-update.
-  const blocks = contentToBlocks(content, await uploadImages(content));
-  if (blocks.length > 0) {
-    for (let i = 0; i < blocks.length; i += 100) {
-      await notionRequest("PATCH", `/blocks/${pageId}/children`, {
-        children: blocks.slice(i, i + 100),
-      });
-    }
+  // 3. Append the new tail FIRST so the page is never missing content.
+  const tail = lines.slice(n).join("\n");
+  const blocks = contentToBlocks(tail, await uploadImages(tail));
+  for (let i = 0; i < blocks.length; i += 100) {
+    await notionRequest("PATCH", `/blocks/${pageId}/children`, {
+      children: blocks.slice(i, i + 100),
+    });
   }
+  const oldBlockIds = old.slice(o).map((b) => b.id);
 
   // 4. Delete old blocks in small concurrent batches.
   let failedDeletes = 0;
