@@ -164,6 +164,142 @@ async fn notion_request(
     unreachable!()
 }
 
+// ---------- Note images (stored locally, uploaded to Notion on sync) ----------
+
+const IMAGE_EXTS: [&str; 4] = ["png", "jpg", "gif", "webp"];
+/// Notion's single-part upload limit.
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// Image names come from the frontend and from Notion captions, so they are
+/// validated strictly to rule out path traversal: `[A-Za-z0-9-]+.<ext>`.
+fn image_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    let (stem, ext) = name.rsplit_once('.').ok_or("invalid image name")?;
+    let stem_ok = !stem.is_empty() && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if !stem_ok || !IMAGE_EXTS.contains(&ext) {
+        return Err("invalid image name".into());
+    }
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("images");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join(name))
+}
+
+fn image_mime(name: &str) -> &'static str {
+    match name.rsplit_once('.').map(|(_, e)| e) {
+        Some("jpg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    }
+}
+
+fn write_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })
+}
+
+/// Raw bytes in the body (no JSON/base64 overhead), name in the `x-name` header.
+#[tauri::command]
+fn save_image(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected raw image bytes".into());
+    };
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("image is larger than 20 MB".into());
+    }
+    let name = request
+        .headers()
+        .get("x-name")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing image name")?;
+    write_atomic(&image_path(&app, name)?, bytes)
+}
+
+#[tauri::command]
+fn read_image(app: AppHandle, name: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = fs::read(image_path(&app, &name)?).map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+fn network_err(e: reqwest::Error) -> String {
+    serde_json::json!({ "code": "network_error", "message": format!("Network error: {}", e) }).to_string()
+}
+
+fn http_err(status: u16, text: &str) -> String {
+    serde_json::json!({ "code": format!("http_{}", status), "status": status, "message": text }).to_string()
+}
+
+/// Upload a local image via Notion's File Upload API; returns the
+/// file_upload id to reference from an image block (valid for 1 hour).
+#[tauri::command]
+async fn notion_upload_image(app: AppHandle, name: String) -> Result<String, String> {
+    let key = load_api_key(&app).ok_or_else(|| {
+        r#"{"code":"unauthorized","message":"No Notion API key configured."}"#.to_string()
+    })?;
+    let bytes = fs::read(image_path(&app, &name)?).map_err(|e| e.to_string())?;
+    let mime = image_mime(&name);
+    let client = http_client();
+
+    let resp = client
+        .post(format!("{}/file_uploads", NOTION_API))
+        .bearer_auth(&key)
+        .header("Notion-Version", NOTION_VERSION)
+        .json(&serde_json::json!({ "filename": name, "content_type": mime }))
+        .send()
+        .await
+        .map_err(network_err)?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    if !(200..300).contains(&status) {
+        return Err(http_err(status, &text));
+    }
+    let created: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    let id = created["id"].as_str().ok_or("file upload id missing")?.to_string();
+
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(name)
+        .mime_str(mime)
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .post(format!("{}/file_uploads/{}/send", NOTION_API, id))
+        .bearer_auth(&key)
+        .header("Notion-Version", NOTION_VERSION)
+        .multipart(reqwest::multipart::Form::new().part("file", part))
+        .send()
+        .await
+        .map_err(network_err)?;
+    let status = resp.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(http_err(status, &resp.text().await.unwrap_or_default()));
+    }
+    Ok(id)
+}
+
+/// Fetch a Notion-hosted image (signed URL) into the local store, once.
+#[tauri::command]
+async fn download_image(app: AppHandle, name: String, url: String) -> Result<(), String> {
+    let path = image_path(&app, &name)?;
+    if path.exists() {
+        return Ok(());
+    }
+    if !url.starts_with("https://") {
+        return Err("only https image URLs are allowed".into());
+    }
+    let resp = http_client().get(&url).send().await.map_err(network_err)?;
+    let status = resp.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(http_err(status, ""));
+    }
+    let bytes = resp.bytes().await.map_err(network_err)?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("image is larger than 20 MB".into());
+    }
+    write_atomic(&path, &bytes)
+}
+
 // ---------- Local persistence (config + notes cache) ----------
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -222,6 +358,7 @@ fn save_notes(app: AppHandle, notes: Value) -> Result<(), String> {
 fn clear_local_cache(app: AppHandle) -> Result<(), String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     fs::remove_file(dir.join("notes.json")).ok();
+    fs::remove_dir_all(dir.join("images")).ok();
     let cfg_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     fs::remove_file(cfg_dir.join("config.json")).ok();
     Ok(())
@@ -244,6 +381,10 @@ pub fn run() {
             has_api_key,
             delete_api_key,
             notion_request,
+            save_image,
+            read_image,
+            notion_upload_image,
+            download_image,
             load_config,
             save_config,
             load_notes,
