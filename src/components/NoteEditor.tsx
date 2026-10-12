@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +12,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useNotes } from "@/store/notes";
 import { formatRelative } from "@/lib/format";
+import { LOCAL_PREFIX, imageRefs, localImageUrl, saveImage } from "@/lib/images";
 import type { Note } from "@/types/note";
 
 interface NoteEditorProps {
@@ -50,6 +52,36 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
     },
     [flushPending],
   );
+
+  const images = useMemo(() => imageRefs(content), [content]);
+
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+    if (files.length === 0 || !note) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    let lines: string[];
+    try {
+      lines = await Promise.all(files.map(saveImage));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not paste image");
+      return;
+    }
+    // Editor is keyed per note: a null ref means the user switched away.
+    if (!textareaRef.current) return;
+    const text = textareaRef.current.value;
+    const before = text.slice(0, start);
+    const insert = (before && !before.endsWith("\n") ? "\n" : "") + lines.join("\n") + "\n";
+    const next = before + insert + text.slice(end);
+    setContent(next);
+    queueUpdate(note.id, { content: next });
+    requestAnimationFrame(() => {
+      const caret = start + insert.length;
+      textareaRef.current?.setSelectionRange(caret, caret);
+    });
+  };
 
   // Flush unsaved keystrokes when switching notes or unmounting.
   useEffect(() => {
@@ -130,8 +162,16 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
               setContent(next);
               queueUpdate(note.id, { content: next });
             }}
+            onPaste={handlePaste}
             className="min-h-48 w-full flex-1 resize-none border-none bg-transparent p-0 text-[15.5px] font-normal leading-[1.75] tracking-[-0.005em] text-foreground/90 placeholder:text-muted-foreground/50 shadow-none focus-visible:ring-0"
           />
+          {images.length > 0 && (
+            <div className="mt-4 flex flex-col gap-3">
+              {images.map((ref, i) => (
+                <NoteImage key={`${ref}-${i}`} src={ref} />
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-end px-8 pt-2 pb-4">
@@ -139,6 +179,41 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+function NoteImage({ src }: { src: string }) {
+  const [url, setUrl] = useState<string | null>(src.startsWith(LOCAL_PREFIX) ? null : src);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!src.startsWith(LOCAL_PREFIX)) return;
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    localImageUrl(src.slice(LOCAL_PREFIX.length))
+      .then((u) => {
+        objectUrl = u;
+        if (cancelled) URL.revokeObjectURL(u);
+        else setUrl(u);
+      })
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
+
+  if (failed) {
+    return <div className="text-xs text-muted-foreground">Image unavailable</div>;
+  }
+  if (!url) return null;
+  return (
+    <img
+      src={url}
+      alt=""
+      onError={() => setFailed(true)}
+      className="max-h-96 max-w-full self-start rounded-md border object-contain"
+    />
   );
 }
 
