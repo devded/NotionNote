@@ -29,10 +29,9 @@ export function SyncButton() {
     if (!online || isSyncing) return;
     flushSave();
     toast.loading("Syncing with Notion…", { id: "sync-action" });
-    try {
-      await syncNow();
+    if (await syncNow()) {
       toast.success("Notion sync complete", { id: "sync-action" });
-    } catch {
+    } else {
       toast.error("Sync failed. Check your connection or API key.", { id: "sync-action" });
     }
   };

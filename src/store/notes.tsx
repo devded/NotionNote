@@ -39,7 +39,8 @@ interface NotesStore {
   updateNote(id: string, patch: Partial<Pick<Note, "title" | "content">>): void;
   deleteNote(id: string): void;
   flushSave(): void;
-  syncNow(): Promise<void>;
+  /** Resolves false when the sync failed or could not run. */
+  syncNow(): Promise<boolean>;
 
   /** Run the ensure-database flow and persist the result. */
   connect(apiKey: string, dbName: string): Promise<{ existed: boolean }>;
@@ -126,7 +127,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   // Indirection so scheduleSync can fire the sync engine regardless of
   // declaration order (runSync is defined below); assigned in an effect.
-  const syncFnRef = useRef<(() => Promise<void>) | null>(null);
+  const syncFnRef = useRef<(() => Promise<boolean>) | null>(null);
 
   const scheduleSync = useCallback((delay = 1200) => {
     if (syncTimer.current) window.clearTimeout(syncTimer.current);
@@ -148,11 +149,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   // ------------------------------------------------------------------ sync
 
-  const runSync = useCallback(async () => {
-    if (syncingRef.current) return;
-    if (!navigator.onLine || !configRef.current.connected) return;
+  const runSync = useCallback(async (): Promise<boolean> => {
+    if (syncingRef.current) return false;
+    if (!navigator.onLine || !configRef.current.connected) return false;
     const cfg = configRef.current;
-    if (!cfg.data_source_id) return;
+    if (!cfg.data_source_id) return false;
 
     syncingRef.current = true;
     setGlobalSync("syncing");
@@ -247,6 +248,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       syncingRef.current = false;
       setGlobalSync(hadError ? "error" : navigator.onLine ? "idle" : "offline");
     }
+    return !hadError;
 
     function markFailed() {
       applyPersisted({
@@ -478,16 +480,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setConfig(next);
       configRef.current = { ...next };
       await invoke("save_config", { config: { ...next, theme } });
-      // First pull from Notion
+      // First pull from Notion. Unsynced local notes (pending, errored or
+      // never pushed) win over their remote copy; synced ones are replaced.
       const remote = await fetchNotes(result.dataSourceId);
-      const existing = storeRef.current.notes;
-      const byPageId = new Map(existing.map((n) => [n.notion_page_id ?? n.id, n]));
-      const merged = [...remote];
-      for (const n of existing) {
-        if (n.sync_status === "pending" || !byPageId.has(n.notion_page_id ?? "")) {
-          if (!merged.some((m) => m.id === n.id)) merged.unshift(n);
-        }
-      }
+      const keep = storeRef.current.notes.filter(
+        (n) => n.sync_status !== "synced" || !n.notion_page_id,
+      );
+      const keptPages = new Set(keep.map((n) => n.notion_page_id));
+      const merged = [...keep, ...remote.filter((r) => !keptPages.has(r.id))];
       applyPersisted({ version: 1, notes: merged, pendingDeletes: [] });
       await persistNow();
       setSelectedId((cur) => cur ?? merged[0]?.id ?? null);
