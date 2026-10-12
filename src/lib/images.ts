@@ -36,8 +36,47 @@ export async function saveImage(file: File): Promise<string> {
   return `![image](${LOCAL_PREFIX}${name})`;
 }
 
+/**
+ * Fallback for platforms whose webview hides clipboard images from paste
+ * events (WebKitGTK on Linux). Returns null when the clipboard has no image.
+ */
+export async function pasteClipboardImage(): Promise<string | null> {
+  const name = `${crypto.randomUUID()}.png`;
+  const found = await invoke<boolean>("paste_clipboard_image", { name });
+  return found ? `![image](${LOCAL_PREFIX}${name})` : null;
+}
+
 /** Object URL for a local image; caller revokes it. */
 export async function localImageUrl(name: string): Promise<string> {
   const buf = await invoke<ArrayBuffer>("read_image", { name });
   return URL.createObjectURL(new Blob([buf]));
+}
+
+export type Segment =
+  | { kind: "text"; text: string }
+  | { kind: "image"; line: string; ref: string };
+
+/**
+ * Split content into alternating text/image segments for inline display.
+ * Always starts and ends with text so there is somewhere to type around
+ * every image. `fromSegments(toSegments(x))` is stable after one pass.
+ */
+export function toSegments(content: string): Segment[] {
+  const segs: Segment[] = [];
+  let buf: string[] = [];
+  for (const line of content.split("\n")) {
+    const ref = line.trim().match(IMAGE_LINE)?.[1];
+    if (!ref) {
+      buf.push(line);
+      continue;
+    }
+    segs.push({ kind: "text", text: buf.join("\n") }, { kind: "image", line: line.trim(), ref });
+    buf = [];
+  }
+  segs.push({ kind: "text", text: buf.join("\n") });
+  return segs;
+}
+
+export function fromSegments(segs: Segment[]): string {
+  return segs.map((s) => (s.kind === "text" ? s.text : `\n${s.line}\n`)).join("");
 }
