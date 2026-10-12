@@ -1,5 +1,12 @@
 import { notionInvoke, notionRequest, richTextToPlain, plainToRichText } from "./client";
-import { LOCAL_PREFIX, imageLine, imageRefs, parseImageLine, type ImageInfo } from "@/lib/images";
+import {
+  LOCAL_PREFIX,
+  imageLine,
+  imageRefs,
+  parseImageLine,
+  stripImages,
+  type ImageInfo,
+} from "@/lib/images";
 import type { Note } from "@/types/note";
 
 function pageToNote(page: any): Note {
@@ -40,10 +47,8 @@ function noteProperties(note: {
   created_at: string;
   updated_at: string;
 }) {
-  const preview =
-    note.content.length > CONTENT_PREVIEW_LIMIT
-      ? note.content.slice(0, CONTENT_PREVIEW_LIMIT)
-      : note.content;
+  // Image lines are noise in Notion's table view; the body holds them.
+  const preview = stripImages(note.content).slice(0, CONTENT_PREVIEW_LIMIT);
   return {
     Title: { title: [{ type: "text", text: { content: note.title || "Untitled" } }] },
     Content: { rich_text: preview ? plainToRichText(preview) : [] },

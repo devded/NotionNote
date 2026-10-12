@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { dateGroup } from "@/lib/format";
+import { stripImages } from "@/lib/images";
 import { useNotes } from "@/store/notes";
 import { NoteStatusIcon } from "./SyncStatus";
 import type { Note } from "@/types/note";
@@ -31,7 +32,7 @@ export function Sidebar({ searchRef }: SidebarProps) {
     const filtered = notes.filter((n) => {
       if (!query.trim()) return true;
       const q = query.toLowerCase();
-      return n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q);
+      return n.title.toLowerCase().includes(q) || stripImages(n.content).toLowerCase().includes(q);
     });
 
     // Sort newest-first and group by date.

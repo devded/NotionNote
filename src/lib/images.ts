@@ -32,6 +32,14 @@ export function imageLine(ref: string, width?: number): string {
   return `![image${width ? `|${width}` : ""}](${ref})`;
 }
 
+/** Content without its image lines, for search and text previews. */
+export function stripImages(content: string): string {
+  return content
+    .split("\n")
+    .filter((l) => !parseImageLine(l))
+    .join("\n");
+}
+
 export function imageRefs(content: string): string[] {
   return content
     .split("\n")

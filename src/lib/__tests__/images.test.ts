@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fromSegments, parseImageLine, toSegments } from "../images";
+import { fromSegments, parseImageLine, stripImages, toSegments } from "../images";
 
 const img = "![image](local:a.png)";
 
@@ -27,5 +27,11 @@ describe("parseImageLine", () => {
     expect(parseImageLine("![image|320](local:a.png)")).toEqual({ ref: "local:a.png", width: 320 });
     expect(parseImageLine("![image](local:a.png)")).toEqual({ ref: "local:a.png" });
     expect(parseImageLine("not an image")).toBeNull();
+  });
+});
+
+describe("stripImages", () => {
+  it("removes image lines only", () => {
+    expect(stripImages("a\n![image|200](local:x.png)\nb")).toBe("a\nb");
   });
 });
