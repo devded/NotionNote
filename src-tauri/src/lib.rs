@@ -218,6 +218,31 @@ fn save_image(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), St
     write_atomic(&image_path(&app, name)?, bytes)
 }
 
+/// WebKitGTK (Linux) doesn't expose clipboard images to DOM paste events, so
+/// read the system clipboard natively. Returns false when it holds no image.
+#[tauri::command]
+async fn paste_clipboard_image(app: AppHandle, name: String) -> Result<bool, String> {
+    let path = image_path(&app, &name)?;
+    let img = match arboard::Clipboard::new().and_then(|mut c| c.get_image()) {
+        Ok(img) => img,
+        Err(arboard::Error::ContentNotAvailable) => return Ok(false),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut buf = Vec::new();
+    let mut encoder = png::Encoder::new(&mut buf, img.width as u32, img.height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .and_then(|mut w| w.write_image_data(&img.bytes))
+        .map_err(|e| e.to_string())?;
+    if buf.len() > MAX_IMAGE_BYTES {
+        return Err("image is larger than 20 MB".into());
+    }
+    write_atomic(&path, &buf)?;
+    Ok(true)
+}
+
 #[tauri::command]
 fn read_image(app: AppHandle, name: String) -> Result<tauri::ipc::Response, String> {
     let bytes = fs::read(image_path(&app, &name)?).map_err(|e| e.to_string())?;
@@ -382,6 +407,7 @@ pub fn run() {
             delete_api_key,
             notion_request,
             save_image,
+            paste_clipboard_image,
             read_image,
             notion_upload_image,
             download_image,
