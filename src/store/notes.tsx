@@ -53,7 +53,12 @@ interface NotesStore {
   testConnection(): Promise<void>;
   setTheme(theme: ThemeMode): void;
   theme: ThemeMode;
+  /** Seconds between an edit and its push to Notion (also the poll interval). */
+  syncDelaySec: number;
+  setSyncDelay(sec: number): void;
 }
+
+export const DEFAULT_SYNC_DELAY_SEC = 60;
 
 /** Delay before the next automatic retry: exponential backoff capped at 60s. */
 function nextRetryDelay(failures: number): number {
@@ -105,6 +110,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [theme, setThemeState] = useState<ThemeMode>("system");
   const configRef = useRef(config);
+  const syncDelaySec = config.sync_delay_sec ?? DEFAULT_SYNC_DELAY_SEC;
 
   // Mutable mirror so the sync engine always sees fresh data.
   const storeRef = useRef<PersistedNotes>(emptyPersisted);
@@ -144,7 +150,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   // declaration order (runSync is defined below); assigned in an effect.
   const syncFnRef = useRef<(() => Promise<boolean>) | null>(null);
 
-  const scheduleSync = useCallback((delay = 1200) => {
+  const scheduleSync = useCallback((delay: number) => {
     if (syncTimer.current) window.clearTimeout(syncTimer.current);
     syncTimer.current = window.setTimeout(() => {
       syncTimer.current = null;
@@ -157,7 +163,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const next = fn(storeRef.current);
       applyPersisted(next);
       scheduleSave();
-      scheduleSync(1200);
+      scheduleSync((configRef.current.sync_delay_sec ?? DEFAULT_SYNC_DELAY_SEC) * 1000);
     },
     [applyPersisted, scheduleSave, scheduleSync],
   );
@@ -374,7 +380,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     // focus/visibilitychange, so nothing is missed.
     const iv = window.setInterval(() => {
       if (canSync()) void runSync();
-    }, 15000);
+    }, syncDelaySec * 1000);
 
     return () => {
       window.removeEventListener("online", goOnline);
@@ -383,7 +389,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", onFocus);
       window.clearInterval(iv);
     };
-  }, [runSync, scheduleSync]);
+  }, [runSync, scheduleSync, syncDelaySec]);
 
   // ------------------------------------------------------------------ api
 
@@ -494,6 +500,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         dataSourceId: configRef.current.data_source_id,
       });
       const next: AppConfig = {
+        ...configRef.current,
         database_name: dbName,
         database_id: result.databaseId,
         data_source_id: result.dataSourceId,
@@ -558,6 +565,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
+  const setSyncDelay = useCallback(
+    (sec: number) => {
+      const next: AppConfig = { ...configRef.current, sync_delay_sec: sec };
+      setConfig(next);
+      configRef.current = next;
+      void invoke("save_config", { config: { ...next, theme } }).catch(console.debug);
+    },
+    [theme],
+  );
+
   const value = useMemo<NotesStore>(
     () => ({
       ready,
@@ -581,6 +598,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       clearCache,
       testConnection,
       setTheme,
+      syncDelaySec,
+      setSyncDelay,
     }),
     [
       ready,
@@ -602,6 +621,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       clearCache,
       testConnection,
       setTheme,
+      syncDelaySec,
+      setSyncDelay,
     ],
   );
 

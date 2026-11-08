@@ -42,6 +42,8 @@ export function SettingsDialog({
     config,
     theme,
     setTheme,
+    syncDelaySec,
+    setSyncDelay,
     lastSyncAt,
     globalSync,
     online,
@@ -163,6 +165,35 @@ export function SettingsDialog({
                 <SelectItem value="herdr">Herdr (Paper Light)</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <Separator />
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium">Sync to Notion after</label>
+            <Select value={String(syncDelaySec)} onValueChange={(v) => setSyncDelay(Number(v))}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[
+                  [10, "10 seconds"],
+                  [30, "30 seconds"],
+                  [60, "1 minute"],
+                  [120, "2 minutes"],
+                  [300, "5 minutes"],
+                  [600, "10 minutes"],
+                ].map(([sec, label]) => (
+                  <SelectItem key={sec} value={String(sec)}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              How long to wait after you stop typing before pushing to Notion. Also how often
+              Notion is checked for changes.
+            </p>
           </div>
 
           <Separator />

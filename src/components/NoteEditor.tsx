@@ -409,7 +409,7 @@ function EditorStatus({ note }: { note: Note }) {
     if (note.sync_status === "synced") return savedFlash ? "Saved" : "✓ Synced";
     if (note.sync_status === "error") return "Sync failed — will retry";
     if (globalSync === "syncing") return "↻ Syncing…";
-    return savedFlash ? "Saved" : "⚠ Waiting to sync";
+    return savedFlash ? "Saved" : "Saved · syncs shortly";
   }, [online, note.sync_status, globalSync, savedFlash]);
 
   return <span className="text-xs text-muted-foreground">{label}</span>;
