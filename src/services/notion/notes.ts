@@ -174,6 +174,9 @@ export function blocksToText(blocks: any[]): string {
       case "bulleted_list_item":
         lines.push(`- ${text}`);
         break;
+      case "to_do":
+        lines.push(`- [${b.to_do?.checked ? "x" : " "}] ${text}`);
+        break;
       case "numbered_list_item":
         lines.push(`1. ${text}`);
         break;
@@ -221,10 +224,23 @@ async function fetchPageContent(pageId: string): Promise<string> {
 
 /**
  * Convert plain-text/markdown-lite content into Notion blocks.
- * Supported: # ## ### headings, - bullets, 1. numbered items, > quotes,
+ * Supported: # ## ### headings, - [ ] / - [x] tasks, - bullets, 1. numbered items, > quotes,
  * `![](…)` image lines, everything else becomes a paragraph. Blank lines are
  * dropped. Local images need their file_upload id in `uploads`.
  */
+/** `- [ ] text` / `- [x] text`, the task syntax the editor renders as a checkbox. */
+const TASK = /^- \[([ xX])\] (.*)$/;
+
+/**
+ * A block's text line for diffing against local content. A bullet whose text
+ * looks like a task reads back identically to the task line, so it is marked
+ * stale; otherwise pages synced before to_do support would never convert.
+ */
+export function blockSyncKey(b: any): string {
+  const line = blocksToText([b]).replace(/\s+$/, "");
+  return b.type === "bulleted_list_item" && TASK.test(line) ? `${line}\u0000bullet` : line;
+}
+
 export function contentToBlocks(content: string, uploads?: Map<string, string>): any[] {
   const blocks: any[] = [];
   const mk = (type: string, text: string) => ({
@@ -240,7 +256,10 @@ export function contentToBlocks(content: string, uploads?: Map<string, string>):
     else if (line.startsWith("### ")) blocks.push(mk("heading_3", line.slice(4)));
     else if (line.startsWith("## ")) blocks.push(mk("heading_2", line.slice(3)));
     else if (line.startsWith("# ")) blocks.push(mk("heading_1", line.slice(2)));
-    else if (line.startsWith("- ")) blocks.push(mk("bulleted_list_item", line.slice(2)));
+    else if (TASK.test(line)) {
+      const [, mark, text] = line.match(TASK)!;
+      blocks.push({ object: "block", type: "to_do", to_do: { rich_text: plainToRichText(text), checked: mark !== " " } });
+    } else if (line.startsWith("- ")) blocks.push(mk("bulleted_list_item", line.slice(2)));
     else if (/^\d+\.\s/.test(line)) blocks.push(mk("numbered_list_item", line.replace(/^\d+\.\s/, "")));
     else if (line.startsWith("> ")) blocks.push(mk("quote", line.slice(2)));
     else blocks.push(mk("paragraph", line));
@@ -290,7 +309,7 @@ async function syncPageBlocks(pageId: string, content: string) {
   // 1. Fetch old blocks: their ids (for deletion) and text (for diffing).
   const old = (await listChildren(pageId)).map((b) => ({
     id: b.id,
-    line: blocksToText([b]).replace(/\s+$/, ""),
+    line: blockSyncKey(b),
   }));
 
   // 2. Keep the longest unchanged prefix of blocks. Typing usually happens

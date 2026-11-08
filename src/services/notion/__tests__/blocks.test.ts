@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blocksToText, contentToBlocks, normalizeForCompare } from "../notes";
+import { blockSyncKey, blocksToText, contentToBlocks, normalizeForCompare } from "../notes";
 
 describe("contentToBlocks", () => {
   it("maps markdown-lite constructs to Notion block types", () => {
@@ -110,5 +110,30 @@ describe("image widths", () => {
       image: { type: "file", file: { url: "https://s3.example/abc.png" }, caption: [{ plain_text: "abc.png|400" }] },
     };
     expect(blocksToText([fromNotion])).toBe("![image|400](local:abc.png)");
+  });
+});
+
+describe("task lists", () => {
+  it("maps - [ ] / - [x] to Notion to_do blocks", () => {
+    const blocks = contentToBlocks("- [ ] todo\n- [x] done\n- [X] Done\n- plain");
+    expect(blocks.map((b) => b.type)).toEqual(["to_do", "to_do", "to_do", "bulleted_list_item"]);
+    expect(blocks.slice(0, 3).map((b) => b.to_do.checked)).toEqual([false, true, true]);
+    expect(blocks[0].to_do.rich_text[0].text.content).toBe("todo");
+  });
+
+  it("round-trips tasks through blocks and back", () => {
+    const original = "- [ ] todo\n- [x] done\n- plain";
+    expect(blocksToText(contentToBlocks(original))).toBe(original);
+  });
+
+  it("reads to_do blocks created in Notion", () => {
+    const fromNotion = { type: "to_do", to_do: { checked: true, rich_text: [{ plain_text: "ship it" }] } };
+    expect(blocksToText([fromNotion])).toBe("- [x] ship it");
+  });
+
+  it("treats an old bullet holding '[x] …' text as stale so sync rewrites it", () => {
+    const oldBullet = { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "[x] Test" }] } };
+    expect(blockSyncKey(oldBullet)).not.toBe("- [x] Test");
+    expect(blockSyncKey(contentToBlocks("- [x] Test")[0])).toBe("- [x] Test");
   });
 });
