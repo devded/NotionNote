@@ -30,6 +30,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useNotes } from "@/store/notes";
 import { formatRelative } from "@/lib/format";
+import { THEME_OPTIONS, isTheme } from "@/lib/themes";
 
 export function SettingsDialog({
   open,
@@ -154,15 +155,16 @@ export function SettingsDialog({
 
           <div className="grid gap-2">
             <label className="text-sm font-medium">Theme</label>
-            <Select value={theme} onValueChange={(v) => setTheme(v as any)}>
+            <Select value={theme} onValueChange={(v) => isTheme(v) && setTheme(v)}>
               <SelectTrigger className="w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="system">System</SelectItem>
-                <SelectItem value="light">Light</SelectItem>
-                <SelectItem value="dark">Dark</SelectItem>
-                <SelectItem value="herdr">Herdr (Paper Light)</SelectItem>
+                {THEME_OPTIONS.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

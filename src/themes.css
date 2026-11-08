@@ -1,0 +1,46 @@
+/* Palettes ported from popular Obsidian community themes (open-source
+   palettes: Nord, Dracula, Gruvbox, Catppuccin, Solarized). Each sets a few
+   base tokens; the shared block below derives the rest. `html.` beats `.dark`. */
+
+html.nord {
+  --background: #2e3440; --foreground: #eceff4; --surface: #3b4252; --mass: #434c5e;
+  --muted-foreground: #a3adc2; --primary: #88c0d0; --primary-foreground: #2e3440; --border: #4c566a;
+}
+html.dracula {
+  --background: #282a36; --foreground: #f8f8f2; --surface: #21222c; --mass: #343746;
+  --muted-foreground: #a6accd; --primary: #bd93f9; --primary-foreground: #282a36; --border: #44475a;
+}
+html.gruvbox {
+  --background: #282828; --foreground: #ebdbb2; --surface: #1d2021; --mass: #3c3836;
+  --muted-foreground: #a89984; --primary: #fe8019; --primary-foreground: #282828; --border: #504945;
+}
+html.catppuccin {
+  --background: #1e1e2e; --foreground: #cdd6f4; --surface: #181825; --mass: #313244;
+  --muted-foreground: #a6adc8; --primary: #cba6f7; --primary-foreground: #1e1e2e; --border: #45475a;
+}
+html.solarized {
+  --background: #fdf6e3; --foreground: #073642; --surface: #eee8d5; --mass: #e9e2cb;
+  --muted-foreground: #657b83; --primary: #268bd2; --primary-foreground: #fdf6e3; --border: #ddd6c1;
+}
+
+html:is(.nord, .dracula, .gruvbox, .catppuccin, .solarized) {
+  --card: var(--surface);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface);
+  --popover-foreground: var(--foreground);
+  --secondary: var(--mass);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--mass);
+  --accent: var(--mass);
+  --accent-foreground: var(--foreground);
+  --input: var(--border);
+  --ring: color-mix(in oklab, var(--primary) 50%, transparent);
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--mass);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}

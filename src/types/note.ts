@@ -21,7 +21,8 @@ export interface PersistedNotes {
   pendingDeletes: string[];
 }
 
-export type ThemeMode = "system" | "light" | "dark" | "herdr";
+import type { ThemeMode } from "@/lib/themes";
+export type { ThemeMode };
 
 export interface AppConfig {
   database_name: string;

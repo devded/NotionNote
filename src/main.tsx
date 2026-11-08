@@ -4,25 +4,20 @@ import App from "./App";
 import { NotesProvider } from "@/store/notes";
 import { Toaster } from "@/components/ui/sonner";
 import "@/index.css";
+import { applyTheme, isTheme } from "@/lib/themes";
 
 // Restore the user's theme synchronously, before first render/paint, so dark
 // or themed users never see a flash of the default light UI. This reads the
 // localStorage mirror written by the store; the async config load reconciles
 // with the source of truth shortly after.
 (function restoreThemeEarly() {
-  const root = document.documentElement;
-  root.classList.remove("light", "dark", "herdr");
-  let theme = "system";
+  let theme: unknown = "system";
   try {
     theme = JSON.parse(localStorage.getItem("monolog-theme") ?? '"system"');
   } catch {
     /* fall through to system */
   }
-  if (theme === "light" || theme === "dark" || theme === "herdr") {
-    root.classList.add(theme);
-  } else {
-    root.classList.add(window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  }
+  applyTheme(isTheme(theme) ? theme : "system");
 })();
 
 // Native file drops are disabled (tauri.conf.json) so the editor gets real

@@ -21,6 +21,7 @@ import { notionInvoke } from "@/services/notion/client";
 import { parsePersistedNotes } from "@/lib/persistence";
 import { LOCAL_PREFIX, imageRefs } from "@/lib/images";
 import { mergeRemoteAndLocal, type PushResult } from "@/lib/sync-merge";
+import { applyTheme, isTheme } from "@/lib/themes";
 
 export type GlobalSyncState = "idle" | "syncing" | "offline" | "error";
 
@@ -72,27 +73,6 @@ const emptyPersisted: PersistedNotes = {
   notes: [],
   pendingDeletes: [],
 };
-
-const THEME_CLASSES: ThemeMode[] = ["light", "dark", "herdr"];
-const THEMES: ThemeMode[] = ["system", ...THEME_CLASSES];
-
-/** Apply a theme to the document and mirror it so startup can restore
- *  synchronously (before first paint) without waiting on async config I/O. */
-function applyTheme(theme: ThemeMode) {
-  const root = document.documentElement;
-  root.classList.remove(...THEME_CLASSES);
-  try {
-    localStorage.setItem("monolog-theme", JSON.stringify(theme));
-  } catch {
-    /* private mode etc. — non-fatal */
-  }
-  if (theme === "system") {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    root.classList.add(prefersDark ? "dark" : "light");
-  } else {
-    root.classList.add(theme);
-  }
-}
 
 export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -320,7 +300,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         setConfig({ ...cfg });
         configRef.current = { ...cfg };
         // Unknown themes (e.g. the removed "kami") fall back to "system".
-        const savedTheme = cfg.theme && THEMES.includes(cfg.theme) ? cfg.theme : "system";
+        const savedTheme = isTheme(cfg.theme) ? cfg.theme : "system";
         setThemeState(savedTheme);
         applyTheme(savedTheme);
         const saved = parsePersistedNotes(await invoke("load_notes"));

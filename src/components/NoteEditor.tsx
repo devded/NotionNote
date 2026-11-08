@@ -201,7 +201,7 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
               setTitle(next);
               queueUpdate(note.id, { title: next });
             }}
-            className="note-title h-auto border-none bg-transparent px-0 text-2xl font-semibold tracking-tight shadow-none focus-visible:ring-0"
+            className="note-title h-auto border-none bg-transparent px-0 text-2xl font-semibold md:text-2xl dark:bg-transparent tracking-tight shadow-none focus-visible:ring-0"
           />
           <div className="flex shrink-0 items-center gap-2">
             <span className="text-xs text-muted-foreground/75 select-none">
