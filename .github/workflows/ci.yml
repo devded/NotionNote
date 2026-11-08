@@ -1,11 +1,8 @@
 name: CI
 
+# Manual only: app builds happen in the Release workflow.
 on:
-  push:
-    branches:
-      - main
-      - dev
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
