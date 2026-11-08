@@ -137,3 +137,53 @@ describe("task lists", () => {
     expect(blockSyncKey(contentToBlocks("- [x] Test")[0])).toBe("- [x] Test");
   });
 });
+
+describe("nested lists (Tab indentation)", () => {
+  const kids = (b: any) => b[b.type].children ?? [];
+
+  it("nests indented items as Notion children", () => {
+    const [a] = contentToBlocks("- a\n  - b\n    - [x] c");
+    expect(a.type).toBe("bulleted_list_item");
+    const [b] = kids(a);
+    expect(b.bulleted_list_item.rich_text[0].text.content).toBe("b");
+    const [c] = kids(b);
+    expect(c.type).toBe("to_do");
+    expect(c.to_do.checked).toBe(true);
+  });
+
+  it("round-trips nested content", () => {
+    const original = "- a\n  - b\n    - [ ] c\n  - d\n- e";
+    expect(blocksToText(contentToBlocks(original))).toBe(original);
+  });
+
+  it("clamps a jump of several levels to one level deeper", () => {
+    expect(blocksToText(contentToBlocks("- a\n      - b"))).toBe("- a\n  - b");
+  });
+
+  it("caps nesting at Notion's two levels per request", () => {
+    expect(blocksToText(contentToBlocks("- a\n  - b\n    - c\n      - d"))).toBe("- a\n  - b\n    - c\n    - d");
+  });
+
+  it("does not nest under headings, which cannot have children in Notion", () => {
+    const blocks = contentToBlocks("# H\n  - x");
+    expect(blocks.map((b) => b.type)).toEqual(["heading_1", "bulleted_list_item"]);
+  });
+
+  it("reads children fetched from Notion as indented lines", () => {
+    const fetched = {
+      type: "bulleted_list_item",
+      bulleted_list_item: { rich_text: [{ plain_text: "parent" }] },
+      children: [{ type: "to_do", to_do: { checked: false, rich_text: [{ plain_text: "child" }] } }],
+    };
+    expect(blocksToText([fetched])).toBe("- parent\n  - [ ] child");
+  });
+});
+
+describe("fenced code keeps its indentation", () => {
+  it("does not nest indented lines inside ``` fences", () => {
+    const original = "- item\n```\nfunction () {\n  return 1\n}\n```";
+    const blocks = contentToBlocks(original);
+    expect(blocks.every((b) => !(b[b.type]?.children?.length))).toBe(true);
+    expect(blocksToText(blocks)).toBe(original);
+  });
+});

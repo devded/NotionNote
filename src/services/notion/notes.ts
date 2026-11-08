@@ -144,6 +144,7 @@ function imageBlockLine(b: any): string | null {
 /** Pull Notion-hosted images we don't have yet into the local store. */
 async function downloadImages(blocks: any[]): Promise<void> {
   for (const b of blocks) {
+    if (b.children) await downloadImages(b.children);
     if (b.type !== "image" || b.image?.type !== "file" || !b.image.file?.url) continue;
     try {
       await notionInvoke("download_image", { name: notionImageName(b), url: b.image.file.url });
@@ -164,10 +165,15 @@ async function uploadImages(content: string): Promise<Map<string, string>> {
   return uploads;
 }
 
-export function blocksToText(blocks: any[]): string {
+/** Children of a block: fetched ones (`b.children`) or ones we built for a push. */
+const childrenOf = (b: any): any[] => b.children ?? b[b.type]?.children ?? [];
+
+export function blocksToText(blocks: any[], depth = 0): string {
   const lines: string[] = [];
+  const pad = "  ".repeat(Math.min(depth, MAX_DEPTH));
   for (const b of blocks) {
     if (b.archived || b.in_trash || !b.type) continue;
+    const before = lines.length;
     const rt: any[] = b[b.type]?.rich_text ?? [];
     const text = rt
       .map((r) => r.plain_text ?? r.text?.content ?? "")
@@ -202,12 +208,15 @@ export function blocksToText(blocks: any[]): string {
       default:
         lines.push(text);
     }
+    if (pad && lines.length > before) lines[lines.length - 1] = pad + lines[lines.length - 1];
+    const kids = childrenOf(b);
+    if (kids.length) lines.push(blocksToText(kids, depth + 1));
   }
-  return lines.join("\n");
+  return lines.filter(Boolean).join("\n");
 }
 
 /** All live top-level blocks of a page. */
-async function listChildren(pageId: string): Promise<any[]> {
+async function listChildren(pageId: string, depth = 0): Promise<any[]> {
   const blocks: any[] = [];
   let cursor: string | undefined;
   do {
@@ -220,6 +229,12 @@ async function listChildren(pageId: string): Promise<any[]> {
     }
     cursor = res?.has_more ? res?.next_cursor ?? undefined : undefined;
   } while (cursor);
+  // Child pages/databases also report has_children; only list items nest.
+  if (depth < MAX_DEPTH) {
+    for (const b of blocks) {
+      if (b.has_children && CAN_NEST.has(b.type)) b.children = await listChildren(b.id, depth + 1);
+    }
+  }
   return blocks;
 }
 
@@ -254,33 +269,103 @@ const TASK = /^- \[([ xX])\] (.*)$/;
  */
 export function blockSyncKey(b: any): string {
   const line = blocksToText([b]).replace(/\s+$/, "");
-  return b.type === "bulleted_list_item" && TASK.test(line) ? `${line}\u0000bullet` : line;
+  const first = line.split("\n")[0];
+  return b.type === "bulleted_list_item" && TASK.test(first) ? `${line}\u0000bullet` : line;
 }
 
-export function contentToBlocks(content: string, uploads?: Map<string, string>): any[] {
-  const blocks: any[] = [];
-  const mk = (type: string, text: string) => ({
-    object: "block",
-    type,
-    [type]: { rich_text: plainToRichText(text) },
-  });
+/** Block types Notion lets us nest children under. */
+const CAN_NEST = new Set(["paragraph", "bulleted_list_item", "numbered_list_item", "to_do", "quote", "toggle"]);
+/** Notion accepts two levels of nested children per append request. */
+const MAX_DEPTH = 2;
+
+interface LineNode {
+  text: string;
+  children: LineNode[];
+}
+
+/** Block type a (trimmed) line maps to, ignoring image uploads. */
+function lineType(text: string): string {
+  if (parseImageLine(text)) return "image";
+  if (/^#{1,3} /.test(text)) return "heading";
+  if (TASK.test(text)) return "to_do";
+  if (text.startsWith("- ")) return "bulleted_list_item";
+  if (/^\d+\.\s/.test(text)) return "numbered_list_item";
+  if (text.startsWith("> ")) return "quote";
+  return "paragraph";
+}
+
+/**
+ * Parse content into a tree by indentation (2 spaces or a tab per level, as
+ * Tab inserts in the editor). Depth jumps are clamped to one level deeper,
+ * capped at MAX_DEPTH, and nothing nests under headings or images. Lines
+ * inside ``` fences stay top-level with their indentation intact.
+ */
+function parseTree(content: string): LineNode[] {
+  const roots: LineNode[] = [];
+  const stack: LineNode[] = []; // ancestors of the next line, by depth
+  let inFence = false;
   for (const raw of content.split("\n")) {
     const line = raw.replace(/\s+$/, "");
     if (!line.trim()) continue;
-    const image = imageBlock(parseImageLine(line), uploads);
-    if (image) blocks.push(image);
-    else if (line.startsWith("### ")) blocks.push(mk("heading_3", line.slice(4)));
-    else if (line.startsWith("## ")) blocks.push(mk("heading_2", line.slice(3)));
-    else if (line.startsWith("# ")) blocks.push(mk("heading_1", line.slice(2)));
-    else if (TASK.test(line)) {
-      const [, mark, text] = line.match(TASK)!;
-      blocks.push({ object: "block", type: "to_do", to_do: { rich_text: plainToRichText(text), checked: mark !== " " } });
-    } else if (line.startsWith("- ")) blocks.push(mk("bulleted_list_item", line.slice(2)));
-    else if (/^\d+\.\s/.test(line)) blocks.push(mk("numbered_list_item", line.replace(/^\d+\.\s/, "")));
-    else if (line.startsWith("> ")) blocks.push(mk("quote", line.slice(2)));
-    else blocks.push(mk("paragraph", line));
+    const fence = line.trimStart().startsWith("```");
+    if (inFence || fence) {
+      // Code keeps its indentation as text; it never nests.
+      if (fence) inFence = !inFence;
+      roots.push({ text: line, children: [] });
+      stack.length = 0;
+      continue;
+    }
+    const indent = line.match(/^[ \t]*/)![0].replace(/\t/g, "  ").length;
+    const text = line.trimStart();
+    stack.length = Math.min(stack.length, Math.floor(indent / 2), MAX_DEPTH);
+    while (stack.length && !CAN_NEST.has(lineType(stack[stack.length - 1].text))) stack.pop();
+    const node: LineNode = { text, children: [] };
+    (stack.length ? stack[stack.length - 1].children : roots).push(node);
+    stack.push(node);
   }
-  return blocks;
+  return roots;
+}
+
+/** Text that parses back into exactly these nodes. */
+function treeToText(nodes: LineNode[], depth = 0): string {
+  return nodes
+    .map((n) => ["  ".repeat(depth) + n.text, treeToText(n.children, depth + 1)].filter(Boolean).join("\n"))
+    .join("\n");
+}
+
+function lineToBlock(text: string, uploads?: Map<string, string>): any {
+  const mk = (type: string, t: string) => ({
+    object: "block",
+    type,
+    [type]: { rich_text: plainToRichText(t) },
+  });
+  const image = imageBlock(parseImageLine(text), uploads);
+  if (image) return image;
+  if (text.startsWith("### ")) return mk("heading_3", text.slice(4));
+  if (text.startsWith("## ")) return mk("heading_2", text.slice(3));
+  if (text.startsWith("# ")) return mk("heading_1", text.slice(2));
+  const task = text.match(TASK);
+  if (task) {
+    return { object: "block", type: "to_do", to_do: { rich_text: plainToRichText(task[2]), checked: task[1] !== " " } };
+  }
+  if (text.startsWith("- ")) return mk("bulleted_list_item", text.slice(2));
+  if (/^\d+\.\s/.test(text)) return mk("numbered_list_item", text.replace(/^\d+\.\s/, ""));
+  if (text.startsWith("> ")) return mk("quote", text.slice(2));
+  return mk("paragraph", text);
+}
+
+function nodesToBlocks(nodes: LineNode[], uploads?: Map<string, string>): any[] {
+  return nodes.map((n) => {
+    const block = lineToBlock(n.text, uploads);
+    if (n.children.length && CAN_NEST.has(block.type)) {
+      block[block.type].children = nodesToBlocks(n.children, uploads);
+    }
+    return block;
+  });
+}
+
+export function contentToBlocks(content: string, uploads?: Map<string, string>): any[] {
+  return nodesToBlocks(parseTree(content), uploads);
 }
 
 function imageBlock(image: ImageInfo | null, uploads?: Map<string, string>): any {
@@ -306,23 +391,19 @@ function imageBlock(image: ImageInfo | null, uploads?: Map<string, string>): any
 }
 
 /**
- * Normalize text exactly the way contentToBlocks does (trailing whitespace
- * trimmed, blank lines dropped) so remote page bodies can be compared with
- * local content to detect "nothing changed" cheaply.
+ * Text as Notion would store it (blank lines dropped, indentation normalized)
+ * so remote page bodies can be compared with local content cheaply.
  */
 export function normalizeForCompare(text: string): string {
-  return text
-    .split("\n")
-    .map((l) => l.replace(/\s+$/, ""))
-    .filter((l) => l.trim())
-    .join("\n");
+  return blocksToText(contentToBlocks(text));
 }
 
 /** Number of block deletions sent concurrently (Notion averages ~3 req/s). */
 const DELETE_CONCURRENCY = 3;
 
 async function syncPageBlocks(pageId: string, content: string) {
-  // 1. Fetch old blocks: their ids (for deletion) and text (for diffing).
+  // 1. Fetch old top-level blocks (children included): ids for deletion,
+  //    text for diffing. Deleting a block also deletes its children.
   const old = (await listChildren(pageId)).map((b) => ({
     id: b.id,
     line: blockSyncKey(b),
@@ -334,20 +415,21 @@ async function syncPageBlocks(pageId: string, content: string) {
   //    Notion blocks have no local counterpart and are skipped over.
   // ponytail: prefix only; an edit near the top still rewrites everything
   // below it. Add suffix matching via Notion's `position` insert if needed.
-  const lines = normalizeForCompare(content).split("\n").filter(Boolean);
+  const units = parseTree(content);
+  const keys = units.map((u) => normalizeForCompare(treeToText([u])));
   let o = 0;
   let n = 0;
   while (o < old.length) {
     if (!old[o].line.trim()) o++;
-    else if (n < lines.length && old[o].line === lines[n]) {
+    else if (n < keys.length && old[o].line === keys[n]) {
       o++;
       n++;
     } else break;
   }
-  if (o === old.length && n === lines.length) return;
+  if (o === old.length && n === keys.length) return;
 
   // 3. Append the new tail FIRST so the page is never missing content.
-  const tail = lines.slice(n).join("\n");
+  const tail = treeToText(units.slice(n));
   await appendBlocks(pageId, contentToBlocks(tail, await uploadImages(tail)));
   const oldBlockIds = old.slice(o).map((b) => b.id);
 
