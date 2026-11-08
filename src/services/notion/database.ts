@@ -8,10 +8,6 @@ interface DataSourceRef {
   dataSourceId: string;
 }
 
-function dataSourceTitle(ds: any): string {
-  return richTextToPlain(ds?.title);
-}
-
 async function searchDataSourceByName(name: string): Promise<any | null> {
   const res = await notionRequest<any>("POST", "/search", {
     query: name,
@@ -19,7 +15,7 @@ async function searchDataSourceByName(name: string): Promise<any | null> {
   });
   for (const ds of res?.results ?? []) {
     if (ds.in_trash || ds.archived) continue;
-    if (dataSourceTitle(ds).trim().toLowerCase() === name.trim().toLowerCase()) return ds;
+    if (richTextToPlain(ds?.title).trim().toLowerCase() === name.trim().toLowerCase()) return ds;
   }
   return null;
 }
@@ -36,7 +32,7 @@ const REQUIRED_PROPERTIES: Record<string, Record<string, any>> = {
  * types. Adds missing properties when possible; throws a clear error when a
  * property exists but has an incompatible type.
  */
-async function ensureProperties(dataSourceId: string): Promise<string[]> {
+async function ensureProperties(dataSourceId: string): Promise<void> {
   const ds = await notionRequest<any>("GET", `/data_sources/${dataSourceId}`);
   const props: Record<string, any> = ds?.properties ?? {};
 
@@ -59,11 +55,10 @@ async function ensureProperties(dataSourceId: string): Promise<string[]> {
   if (Object.keys(missing).length > 0) {
     await notionRequest("PATCH", `/data_sources/${dataSourceId}`, { properties: missing });
   }
-  return Object.keys(missing);
 }
 
-/** Find an accessible parent page, preferring one named "Notes". */
-async function findParentPage(): Promise<{ pageId: string; title: string }> {
+/** Id of an accessible parent page, preferring one named "Notes". */
+async function findParentPage(): Promise<string> {
   const res = await notionRequest<any>("POST", "/search", {
     filter: { property: "object", value: "page" },
     page_size: 100,
@@ -84,19 +79,19 @@ async function findParentPage(): Promise<{ pageId: string; title: string }> {
           .filter((p: any) => p?.type === "title")
           .flatMap((p: any) => p?.title ?? []),
       );
-    if (title.trim().toLowerCase() === "notes") return { pageId: page.id, title };
+    if (title.trim().toLowerCase() === "notes") return page.id;
     if (!fallback.title) {
       fallback = { ...page, title };
     }
   }
-  return { pageId: fallback.id, title: fallback.title || "Untitled" };
+  return fallback.id;
 }
 
 /** Create the database with its initial data source and required properties. */
 async function createDatabase(name: string): Promise<DataSourceRef> {
-  const parent = await findParentPage();
+  const parentId = await findParentPage();
   const db = await notionRequest<any>("POST", "/databases", {
-    parent: { type: "page_id", page_id: parent.pageId },
+    parent: { type: "page_id", page_id: parentId },
     title: [{ type: "text", text: { content: name } }],
     initial_data_source: { properties: REQUIRED_PROPERTIES },
   });

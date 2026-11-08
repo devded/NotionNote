@@ -30,12 +30,10 @@ interface NotesStore {
   config: AppConfig;
   notes: Note[];
   selectedId: string | null;
-  query: string;
   online: boolean;
   globalSync: GlobalSyncState;
   lastSyncAt: string | null;
 
-  setQuery(q: string): void;
   select(id: string | null): void;
 
   createNote(): string;
@@ -84,7 +82,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   });
   const [persisted, setPersisted] = useState<PersistedNotes>(emptyPersisted);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [query, setQueryState] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
   const [globalSync, setGlobalSync] = useState<GlobalSyncState>("idle");
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
@@ -561,12 +558,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       config,
       notes: persisted.notes,
       selectedId,
-      query,
       online,
       globalSync,
       lastSyncAt,
       theme,
-      setQuery: setQueryState,
       select: setSelectedId,
       createNote,
       updateNote,
@@ -586,7 +581,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       config,
       persisted.notes,
       selectedId,
-      query,
       online,
       globalSync,
       lastSyncAt,
