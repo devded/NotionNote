@@ -44,15 +44,10 @@ fn set_api_key(app: AppHandle, key: String) -> Result<(), String> {
 }
 
 fn store_api_key(app: &AppHandle, key: &str) -> Result<(), String> {
-    if let Some(entry) = keyring_entry() {
-        match entry.set_password(key) {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                log::warn!("keyring unavailable, using file fallback");
-                let _ = e; // logged context only, no secret data
-            }
-        }
+    if keyring_entry().is_some_and(|entry| entry.set_password(key).is_ok()) {
+        return Ok(());
     }
+    log::warn!("keyring unavailable, using file fallback");
     let path = fallback_key_path(app).ok_or("no storage location available")?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -76,6 +71,12 @@ fn load_api_key(app: &AppHandle) -> Option<String> {
     Some(key)
 }
 
+fn require_api_key(app: &AppHandle) -> Result<String, String> {
+    load_api_key(app).ok_or_else(|| {
+        r#"{"code":"unauthorized","message":"No Notion API key configured."}"#.to_string()
+    })
+}
+
 fn read_stored_key(app: &AppHandle) -> Option<String> {
     if let Some(entry) = keyring_entry() {
         if let Ok(key) = entry.get_password() {
@@ -97,8 +98,8 @@ fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("failed to build HTTP client")
     })
@@ -111,9 +112,7 @@ async fn notion_request(
     path: String,
     body: Option<Value>,
 ) -> Result<Value, String> {
-    let key = load_api_key(&app).ok_or_else(|| {
-        r#"{"code":"unauthorized","message":"No Notion API key configured."}"#.to_string()
-    })?;
+    let key = require_api_key(&app)?;
 
     let client = http_client();
     let url = format!("{}{}", NOTION_API, path);
@@ -136,13 +135,7 @@ async fn notion_request(
             (Some(b), "POST") | (Some(b), "PATCH") => req.try_clone().unwrap().json(b),
             _ => req.try_clone().unwrap(),
         };
-        let resp = request.send().await.map_err(|e| {
-            serde_json::json!({
-                "code": "network_error",
-                "message": format!("Network error: {}. Check your internet connection.", e)
-            })
-            .to_string()
-        })?;
+        let resp = request.send().await.map_err(network_err)?;
 
         let status = resp.status().as_u16();
         // Honour Notion's Retry-After header if present (seconds); otherwise
@@ -158,7 +151,7 @@ async fn notion_request(
 
         let retryable = status == 429 || status >= 500;
         if retryable && attempt == 0 {
-            tokio::time::sleep(std::time::Duration::from_secs(retry_after_secs)).await;
+            tokio::time::sleep(Duration::from_secs(retry_after_secs)).await;
             continue;
         }
 
@@ -166,12 +159,7 @@ async fn notion_request(
             return Ok(serde_json::from_str::<Value>(&text).unwrap_or(Value::Null));
         }
 
-        return Err(format!(
-            r#"{{"code":"http_{}","status":{},"message":{}}}"#,
-            status,
-            status,
-            serde_json::to_string(&text).unwrap_or_default()
-        ));
+        return Err(http_err(status, &text));
     }
     unreachable!()
 }
@@ -225,6 +213,8 @@ fn image_mime(name: &str) -> &'static str {
     }
 }
 
+/// Write to a temp file, then rename over the target, so a crash mid-write
+/// can never corrupt the only copy of the user's data.
 fn write_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
@@ -294,9 +284,7 @@ fn http_err(status: u16, text: &str) -> String {
 /// file_upload id to reference from an image block (valid for 1 hour).
 #[tauri::command]
 async fn notion_upload_image(app: AppHandle, name: String) -> Result<String, String> {
-    let key = load_api_key(&app).ok_or_else(|| {
-        r#"{"code":"unauthorized","message":"No Notion API key configured."}"#.to_string()
-    })?;
+    let key = require_api_key(&app)?;
     let bytes = fs::read(image_path(&app, &name)?).map_err(|e| e.to_string())?;
     let mime = image_mime(&name);
     let client = http_client();
@@ -399,15 +387,7 @@ fn write_json<T: Serialize>(path: &PathBuf, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
-    // Write to a temp file first, then atomically rename over the target so a
-    // crash mid-write can never corrupt the only copy of the user's data.
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        e.to_string()
-    })
+    write_atomic(path, &serde_json::to_vec(value).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]

@@ -19,33 +19,26 @@ const NoteSchema = z.object({
 
 const PersistedNotesSchema = z.object({
   version: z.number(),
-  notes: z.array(NoteSchema).catch([]),
+  notes: z.array(z.unknown()).catch([]),
   pendingDeletes: z.array(z.string()).catch([]),
 });
 
-/** Future migrations hook here; currently only v1 exists. */
-function migrate(raw: unknown): unknown {
-  // e.g. if ((raw as any)?.version === 1) return upgradeV1toV2(raw);
-  return raw;
-}
-
 export function parsePersistedNotes(raw: unknown): PersistedNotes {
-  const migrated = migrate(raw ?? {});
-  const result = PersistedNotesSchema.safeParse(migrated);
+  const result = PersistedNotesSchema.safeParse(raw ?? {});
   if (!result.success) {
     console.debug("[persistence] notes cache unreadable, starting fresh:", result.error.message);
     return { version: 1, notes: [], pendingDeletes: [] };
   }
-  const parsed = result.data;
-  if (parsed.notes.length > 0 && Array.isArray((raw as any)?.notes)) {
-    const dropped = ((raw as any).notes as unknown[]).length - parsed.notes.length;
-    if (dropped > 0) {
-      console.debug(`[persistence] dropped ${dropped} malformed note(s)`);
-    }
-  }
+  // Each note is checked on its own so one bad entry can't drop the rest.
+  const notes = result.data.notes.flatMap((n) => {
+    const r = NoteSchema.safeParse(n);
+    return r.success ? [r.data] : [];
+  });
+  const dropped = result.data.notes.length - notes.length;
+  if (dropped > 0) console.debug(`[persistence] dropped ${dropped} malformed note(s)`);
   return {
     version: 1,
-    notes: parsed.notes,
-    pendingDeletes: [...new Set(parsed.pendingDeletes)],
+    notes,
+    pendingDeletes: [...new Set(result.data.pendingDeletes)],
   };
 }

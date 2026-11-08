@@ -5,38 +5,27 @@ import { Input } from "@/components/ui/input";
 import { useNotes } from "@/store/notes";
 import { DEFAULT_DB_NAME } from "@/services/notion/database";
 
-interface Progress {
-  done: string[];
-  active: string | null;
-}
-
 export function Onboarding({ onConnected }: { onConnected: () => void }) {
   const { connect } = useNotes();
   const [apiKey, setApiKey] = useState("");
   const [dbName, setDbName] = useState(DEFAULT_DB_NAME);
-  const [progress, setProgress] = useState<Progress>({ done: [], active: null });
+  const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectedName, setConnectedName] = useState<string | null>(null);
-
-  function setActive(label: string | null) {
-    setProgress((p) => ({
-      done: label === null ? p.done : [...p.done, ...(p.active ? [p.active] : [])],
-      active: label,
-    }));
-  }
+  const name = dbName.trim() || DEFAULT_DB_NAME;
 
   async function handleConnect(e: React.FormEvent) {
     e.preventDefault();
     if (!apiKey.trim()) return;
     setError(null);
+    setConnecting(true);
     try {
-      setActive(`Connecting to ${dbName.trim() || DEFAULT_DB_NAME}…`);
-      await connect(apiKey.trim(), dbName.trim() || DEFAULT_DB_NAME);
-      setActive(null);
-      setConnectedName(dbName.trim() || DEFAULT_DB_NAME);
+      await connect(apiKey.trim(), name);
+      setConnectedName(name);
     } catch (err: any) {
       setError(err?.message ?? "Unable to connect to Notion. Please check your API key.");
-      setProgress({ done: [], active: null });
+    } finally {
+      setConnecting(false);
     }
   }
 
@@ -83,27 +72,17 @@ export function Onboarding({ onConnected }: { onConnected: () => void }) {
         <Button
           type="submit"
           className="mt-6 w-full"
-          disabled={!apiKey.trim() || progress.active !== null}
+          disabled={!apiKey.trim() || connecting}
         >
           Connect
         </Button>
 
         <div className="mt-6 min-h-28 text-sm">
-          {(progress.active || progress.done.length > 0) && (
-            <ul className="space-y-1.5 text-muted-foreground">
-              {progress.done.map((m) => (
-                <li key={m} className="flex items-center gap-2">
-                  <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                  {m}
-                </li>
-              ))}
-              {progress.active && (
-                <li className="flex items-center gap-2">
-                  <Loader2 className="size-3.5 shrink-0 animate-spin" />
-                  {progress.active}
-                </li>
-              )}
-            </ul>
+          {connecting && (
+            <p className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="size-3.5 shrink-0 animate-spin" />
+              Connecting to {name}…
+            </p>
           )}
           {error && (
             <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs leading-relaxed text-destructive">

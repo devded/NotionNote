@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -13,20 +13,11 @@ interface SidebarProps {
 }
 
 export function Sidebar({ searchRef }: SidebarProps) {
-  const { notes, query, setQuery, select, selectedId } = useNotes();
+  const { notes, select, selectedId } = useNotes();
 
-  // Local input state keeps typing instant; the (expensive) store-wide query
-  // update that drives filtering is debounced.
-  const [inputValue, setInputValue] = useState(query);
-  const debounceRef = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-  }, []);
-  const onSearchChange = (value: string) => {
-    setInputValue(value);
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => setQuery(value), 150);
-  };
+  // Typing stays instant; React filters with the deferred value in the background.
+  const [inputValue, setInputValue] = useState("");
+  const query = useDeferredValue(inputValue);
 
   const groups = useMemo(() => {
     const filtered = notes.filter((n) => {
@@ -59,7 +50,7 @@ export function Sidebar({ searchRef }: SidebarProps) {
           <Input
             ref={searchRef}
             value={inputValue}
-            onChange={(e) => onSearchChange(e.target.value)}
+            onChange={(e) => setInputValue(e.target.value)}
             placeholder="Search notes…"
             aria-label="Search notes"
             className="h-8 pl-8 text-sm"

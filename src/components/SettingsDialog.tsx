@@ -30,6 +30,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useNotes } from "@/store/notes";
 import { formatRelative } from "@/lib/format";
+import { THEME_OPTIONS, isTheme } from "@/lib/themes";
 
 export function SettingsDialog({
   open,
@@ -42,6 +43,8 @@ export function SettingsDialog({
     config,
     theme,
     setTheme,
+    syncDelaySec,
+    setSyncDelay,
     lastSyncAt,
     globalSync,
     online,
@@ -79,15 +82,10 @@ export function SettingsDialog({
     }
     setBusy(true);
     try {
-      if (apiKey.trim()) {
-        // connect() verifies the key before replacing the stored one, so a
-        // failed reconnect leaves the working connection untouched.
-        await connect(apiKey.trim(), dbName.trim());
-        toast.success(`Connected to ${dbName.trim()}.`);
-      } else {
-        await testConnection();
-        toast.success("Connection verified.");
-      }
+      // connect() verifies the key before replacing the stored one, so a
+      // failed reconnect leaves the working connection untouched.
+      await connect(apiKey.trim(), dbName.trim());
+      toast.success(`Connected to ${dbName.trim()}.`);
       onOpenChange(false);
     } catch (e: any) {
       toast.error(e?.message ?? "Reconnect failed.");
@@ -157,17 +155,47 @@ export function SettingsDialog({
 
           <div className="grid gap-2">
             <label className="text-sm font-medium">Theme</label>
-            <Select value={theme} onValueChange={(v) => setTheme(v as any)}>
+            <Select value={theme} onValueChange={(v) => isTheme(v) && setTheme(v)}>
               <SelectTrigger className="w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="system">System</SelectItem>
-                <SelectItem value="light">Light</SelectItem>
-                <SelectItem value="dark">Dark</SelectItem>
-                <SelectItem value="herdr">Herdr (Paper Light)</SelectItem>
+                {THEME_OPTIONS.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <Separator />
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium">Sync to Notion after</label>
+            <Select value={String(syncDelaySec)} onValueChange={(v) => setSyncDelay(Number(v))}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[
+                  [10, "10 seconds"],
+                  [30, "30 seconds"],
+                  [60, "1 minute"],
+                  [120, "2 minutes"],
+                  [300, "5 minutes"],
+                  [600, "10 minutes"],
+                ].map(([sec, label]) => (
+                  <SelectItem key={sec} value={String(sec)}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              How long to wait after you stop typing before pushing to Notion. Also how often
+              Notion is checked for changes.
+            </p>
           </div>
 
           <Separator />

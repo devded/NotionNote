@@ -21,7 +21,8 @@ export interface PersistedNotes {
   pendingDeletes: string[];
 }
 
-export type ThemeMode = "system" | "light" | "dark" | "herdr";
+import type { ThemeMode } from "@/lib/themes";
+export type { ThemeMode };
 
 export interface AppConfig {
   database_name: string;
@@ -30,6 +31,9 @@ export interface AppConfig {
   connected: boolean;
   /** Persisted UI preference (not part of the Notion connection config). */
   theme?: ThemeMode;
+  /** Seconds to wait after an edit before pushing to Notion; also the
+   *  background pull interval. Defaults to DEFAULT_SYNC_DELAY_SEC. */
+  sync_delay_sec?: number;
 }
 
 /** Result of the connect/ensure-database flow shown during onboarding. */

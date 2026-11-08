@@ -10,7 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AppConfig, Note, PersistedNotes, SyncStatus, ThemeMode } from "@/types/note";
-import { ensureDatabase } from "@/services/notion/database";
+import { DEFAULT_DB_NAME, ensureDatabase } from "@/services/notion/database";
 import {
   fetchNotes,
   pushCreateNote,
@@ -21,6 +21,7 @@ import { notionInvoke } from "@/services/notion/client";
 import { parsePersistedNotes } from "@/lib/persistence";
 import { LOCAL_PREFIX, imageRefs } from "@/lib/images";
 import { mergeRemoteAndLocal, type PushResult } from "@/lib/sync-merge";
+import { applyTheme, isTheme } from "@/lib/themes";
 
 export type GlobalSyncState = "idle" | "syncing" | "offline" | "error";
 
@@ -29,12 +30,10 @@ interface NotesStore {
   config: AppConfig;
   notes: Note[];
   selectedId: string | null;
-  query: string;
   online: boolean;
   globalSync: GlobalSyncState;
   lastSyncAt: string | null;
 
-  setQuery(q: string): void;
   select(id: string | null): void;
 
   createNote(): string;
@@ -53,7 +52,12 @@ interface NotesStore {
   testConnection(): Promise<void>;
   setTheme(theme: ThemeMode): void;
   theme: ThemeMode;
+  /** Seconds between an edit and its push to Notion (also the poll interval). */
+  syncDelaySec: number;
+  setSyncDelay(sec: number): void;
 }
+
+export const DEFAULT_SYNC_DELAY_SEC = 60;
 
 /** Delay before the next automatic retry: exponential backoff capped at 60s. */
 function nextRetryDelay(failures: number): number {
@@ -68,41 +72,22 @@ const emptyPersisted: PersistedNotes = {
   pendingDeletes: [],
 };
 
-const THEME_CLASSES: ThemeMode[] = ["light", "dark", "herdr"];
-
-/** Apply a theme to the document and mirror it so startup can restore
- *  synchronously (before first paint) without waiting on async config I/O. */
-function applyTheme(theme: ThemeMode) {
-  const root = document.documentElement;
-  root.classList.remove(...THEME_CLASSES);
-  try {
-    localStorage.setItem("monolog-theme", JSON.stringify(theme));
-  } catch {
-    /* private mode etc. — non-fatal */
-  }
-  if (theme === "system") {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    root.classList.add(prefersDark ? "dark" : "light");
-  } else {
-    root.classList.add(theme);
-  }
-}
-
 export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [config, setConfig] = useState<AppConfig>({
-    database_name: "random_notes_desktop",
+    database_name: DEFAULT_DB_NAME,
     database_id: null,
     data_source_id: null,
     connected: false,
   });
   const [persisted, setPersisted] = useState<PersistedNotes>(emptyPersisted);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [query, setQueryState] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
   const [globalSync, setGlobalSync] = useState<GlobalSyncState>("idle");
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [theme, setThemeState] = useState<ThemeMode>("system");
+  const configRef = useRef(config);
+  const syncDelaySec = config.sync_delay_sec ?? DEFAULT_SYNC_DELAY_SEC;
 
   // Mutable mirror so the sync engine always sees fresh data.
   const storeRef = useRef<PersistedNotes>(emptyPersisted);
@@ -142,7 +127,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   // declaration order (runSync is defined below); assigned in an effect.
   const syncFnRef = useRef<(() => Promise<boolean>) | null>(null);
 
-  const scheduleSync = useCallback((delay = 1200) => {
+  const scheduleSync = useCallback((delay: number) => {
     if (syncTimer.current) window.clearTimeout(syncTimer.current);
     syncTimer.current = window.setTimeout(() => {
       syncTimer.current = null;
@@ -155,7 +140,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const next = fn(storeRef.current);
       applyPersisted(next);
       scheduleSave();
-      scheduleSync(1200);
+      scheduleSync((configRef.current.sync_delay_sec ?? DEFAULT_SYNC_DELAY_SEC) * 1000);
     },
     [applyPersisted, scheduleSave, scheduleSync],
   );
@@ -297,12 +282,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, [applyPersisted, persistNow, scheduleSync]);
 
-  // Keep refs in sync with state for use inside async engine.
-  const configRef = useRef(config);
-
   // Ref mirrors are updated in effects, never during render.
   useEffect(() => {
-    configRef.current = { ...config };
+    configRef.current = config;
     syncFnRef.current = runSync;
   });
 
@@ -314,19 +296,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const cfg = (await invoke("load_config")) as AppConfig;
         setConfig({ ...cfg });
         configRef.current = { ...cfg };
-        const savedTheme = cfg.theme;
-        if (
-          savedTheme === "light" ||
-          savedTheme === "dark" ||
-          savedTheme === "system" ||
-          savedTheme === "herdr"
-        ) {
-          // "kami" was removed; old configs fall back to "system".
-          setThemeState(savedTheme as ThemeMode);
-          applyTheme(savedTheme as ThemeMode);
-        } else {
-          applyTheme("system");
-        }
+        // Unknown themes (e.g. the removed "kami") fall back to "system".
+        const savedTheme = isTheme(cfg.theme) ? cfg.theme : "system";
+        setThemeState(savedTheme);
+        applyTheme(savedTheme);
         const saved = parsePersistedNotes(await invoke("load_notes"));
         applyPersisted({
           version: 1,
@@ -368,47 +341,32 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       scheduleSync(100);
     };
     const goOffline = () => setOnline(false);
+    const canSync = () =>
+      document.visibilityState === "visible" && navigator.onLine && configRef.current.connected;
     const onFocus = () => {
-      if (navigator.onLine && configRef.current.connected) {
-        scheduleSync(100);
-      }
-    };
-    const onVisibilityChange = () => {
-      if (
-        document.visibilityState === "visible" &&
-        navigator.onLine &&
-        configRef.current.connected
-      ) {
-        scheduleSync(100);
-      }
+      if (canSync()) scheduleSync(100);
     };
 
     window.addEventListener("online", goOnline);
     window.addEventListener("offline", goOffline);
     window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    document.addEventListener("visibilitychange", onFocus);
 
     // Periodic sync polling to detect Notion edits in background.
     // Skipped while hidden — returning to the app re-triggers a sync via
     // focus/visibilitychange, so nothing is missed.
     const iv = window.setInterval(() => {
-      if (
-        document.visibilityState === "visible" &&
-        navigator.onLine &&
-        configRef.current.connected
-      ) {
-        void runSync();
-      }
-    }, 15000);
+      if (canSync()) void runSync();
+    }, syncDelaySec * 1000);
 
     return () => {
       window.removeEventListener("online", goOnline);
       window.removeEventListener("offline", goOffline);
       window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
+      document.removeEventListener("visibilitychange", onFocus);
       window.clearInterval(iv);
     };
-  }, [runSync, scheduleSync]);
+  }, [runSync, scheduleSync, syncDelaySec]);
 
   // ------------------------------------------------------------------ api
 
@@ -519,6 +477,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         dataSourceId: configRef.current.data_source_id,
       });
       const next: AppConfig = {
+        ...configRef.current,
         database_name: dbName,
         database_id: result.databaseId,
         data_source_id: result.dataSourceId,
@@ -583,18 +542,26 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
+  const setSyncDelay = useCallback(
+    (sec: number) => {
+      const next: AppConfig = { ...configRef.current, sync_delay_sec: sec };
+      setConfig(next);
+      configRef.current = next;
+      void invoke("save_config", { config: { ...next, theme } }).catch(console.debug);
+    },
+    [theme],
+  );
+
   const value = useMemo<NotesStore>(
     () => ({
       ready,
       config,
       notes: persisted.notes,
       selectedId,
-      query,
       online,
       globalSync,
       lastSyncAt,
       theme,
-      setQuery: setQueryState,
       select: setSelectedId,
       createNote,
       updateNote,
@@ -606,13 +573,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       clearCache,
       testConnection,
       setTheme,
+      syncDelaySec,
+      setSyncDelay,
     }),
     [
       ready,
       config,
       persisted.notes,
       selectedId,
-      query,
       online,
       globalSync,
       lastSyncAt,
@@ -627,6 +595,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       clearCache,
       testConnection,
       setTheme,
+      syncDelaySec,
+      setSyncDelay,
     ],
   );
 
