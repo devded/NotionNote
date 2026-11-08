@@ -493,7 +493,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         (n) => n.sync_status !== "synced" || !n.notion_page_id,
       );
       const keptPages = new Set(keep.map((n) => n.notion_page_id));
-      const merged = [...keep, ...remote.filter((r) => !keptPages.has(r.id))];
+      const fresh = remote
+        .filter((r) => !keptPages.has(r.id))
+        .map((r): Note => ({ ...r, content: r.content ?? "" }));
+      const merged = [...keep, ...fresh];
       applyPersisted({ version: 1, notes: merged, pendingDeletes: [] });
       await persistNow();
       setSelectedId((cur) => cur ?? merged[0]?.id ?? null);

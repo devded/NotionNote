@@ -10,9 +10,9 @@ import {
   keymap,
   placeholder as placeholderExt,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentLess, indentMore } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { syntaxTree } from "@codemirror/language";
+import { indentUnit, syntaxTree } from "@codemirror/language";
 
 export interface MarkdownEditorHandle {
   focus(): void;
@@ -210,8 +210,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
                     return true;
                   },
                 },
+                // Notion-style nesting: indent/outdent the line from anywhere in it.
+                // Synced to Notion as child blocks (2 spaces per level).
+                { key: "Tab", run: indentMore },
+                { key: "Shift-Tab", run: indentLess },
               ]),
             ),
+            indentUnit.of("  "),
             history(),
             keymap.of([...defaultKeymap, ...historyKeymap]),
             markdown({ base: markdownLanguage }), // GFM; Enter continues lists

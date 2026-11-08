@@ -172,14 +172,14 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
   // (Only when note is in synced state, never interrupting local in-progress typing)
   useEffect(() => {
     if (note && note.sync_status === "synced") {
-      // Deliberate prop-to-state reconciliation on remote updates; narrowing
-      // deps is intentional so only real content changes reset the fields.
+      // Deliberate prop-to-state reconciliation on remote updates. Keyed on
+      // content, not updated_at: Notion's minute-rounded time may not change.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setTitle(note.title ?? "");
       setContent(note.content ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [note?.updated_at, note?.sync_status]);
+  }, [note?.title, note?.content, note?.sync_status]);
 
   if (!note) {
     return (
