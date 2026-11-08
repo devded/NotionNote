@@ -3,7 +3,7 @@ import { Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { MarkdownEditor, type MarkdownEditorHandle } from "@/components/MarkdownEditor";
 import { Separator } from "@/components/ui/separator";
 import {
   Tooltip,
@@ -59,7 +59,7 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
   useEffect(() => {
     contentRef.current = content;
   });
-  const textRefs = useRef<(HTMLTextAreaElement | null)[]>([]);
+  const textRefs = useRef<(MarkdownEditorHandle | null)[]>([]);
 
   const commit = (id: string, next: string) => {
     contentRef.current = next;
@@ -71,7 +71,7 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
     requestAnimationFrame(() => {
       const el = textRefs.current[index];
       el?.focus();
-      el?.setSelectionRange(caret, caret);
+      el?.setCaret(caret);
     });
 
   /** Remove image segment k, merging the text around it. */
@@ -112,21 +112,23 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
     focusAt(index + 2 * lines.length, 0);
   };
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>, index: number) => {
+  /** Returns true when it takes over the paste (images). */
+  const handlePaste = (e: ClipboardEvent, index: number, start: number, end: number): boolean => {
+    if (!e.clipboardData) return false;
     const files = [...e.clipboardData.items]
       .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
       .map((i) => i.getAsFile())
       .filter((f): f is File => !!f);
     // Text pastes go through untouched; an "empty" paste may be an image the
     // webview couldn't see, so ask the native clipboard.
-    if (files.length === 0 && e.clipboardData.getData("text/plain")) return;
+    if (files.length === 0 && e.clipboardData.getData("text/plain")) return false;
     e.preventDefault();
-    const { selectionStart: start, selectionEnd: end } = e.currentTarget;
     void insertImages(index, start, end, async () => {
       if (files.length > 0) return Promise.all(files.map(saveImage));
       const line = await pasteClipboardImage();
       return line ? [line] : [];
     });
+    return true;
   };
 
   /** Drop on text: at the caret (if focused) or its end; on an image: below it. */
@@ -142,9 +144,9 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
       index += 1;
     } else {
       const el = textRefs.current[index];
-      const focused = el && el === document.activeElement;
-      start = focused ? el.selectionStart : (el?.value.length ?? 0);
-      end = focused ? el.selectionEnd : start;
+      const sel = el?.hasFocus() ? el.selection() : null;
+      start = sel ? sel.from : (el?.length() ?? 0);
+      end = sel ? sel.to : start;
     }
     void insertImages(index, start, end, () => Promise.all(files.map(saveImage)));
   };
@@ -246,30 +248,23 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
                 onResize={(w) => resizeImage(note.id, i, w)}
               />
             ) : (
-              <Textarea
+              <MarkdownEditor
                 key={`${i}-text`}
-                data-segment={i}
+                segment={i}
                 ref={(el) => {
                   textRefs.current[i] = el;
                 }}
                 value={seg.text}
                 placeholder={segments.length === 1 ? "Write your note here…" : undefined}
-                onChange={(e) => {
-                  const text = e.target.value;
-                  commit(note.id, fromSegments(segments.map((s, j) => (j === i ? { kind: "text", text } : s))));
+                onChange={(text) => {
+                  const segs = toSegments(contentRef.current);
+                  commit(note.id, fromSegments(segs.map((s, j) => (j === i ? { kind: "text", text } : s))));
                 }}
-                onKeyDown={(e) => {
-                  // Backspace at the very start of text deletes the image above it.
-                  const el = e.currentTarget;
-                  if (e.key === "Backspace" && i > 0 && el.selectionStart === 0 && el.selectionEnd === 0) {
-                    e.preventDefault();
-                    removeImage(note.id, i - 1);
-                  }
-                }}
-                onPaste={(e) => handlePaste(e, i)}
+                onBackspaceAtStart={i > 0 ? () => removeImage(note.id, i - 1) : undefined}
+                onPaste={(e, sel) => handlePaste(e, i, sel.from, sel.to)}
                 className={cn(
-                  "min-h-0 w-full shrink-0 resize-none border-none bg-transparent p-0 text-[15.5px] font-normal leading-[1.75] tracking-[-0.005em] text-foreground/90 placeholder:text-muted-foreground/50 shadow-none focus-visible:ring-0",
-                  i === segments.length - 1 && "min-h-24 grow",
+                  "note-md w-full shrink-0 text-[15.5px] font-normal leading-[1.75] tracking-[-0.005em] text-foreground/90",
+                  i === segments.length - 1 && "flex min-h-24 grow flex-col",
                 )}
               />
             ),
