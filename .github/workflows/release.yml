@@ -21,10 +21,41 @@ permissions:
   contents: write # required to create releases and upload release assets
 
 jobs:
-  # ------------------------------------------------------------------ Linux
-  build-linux:
-    name: Linux x86_64 (AppImage + deb)
-    runs-on: ubuntu-latest
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64 (AppImage + deb)
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+            files: appimage/*.AppImage deb/*.deb
+            slug: linux-x86_64
+          - name: macOS ARM64 (dmg)
+            os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg
+            files: dmg/*.dmg
+            slug: macos-arm64
+          # Cross-compiled: the Rust target, not the runner, decides the arch.
+          - name: macOS Intel (dmg)
+            os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: dmg
+            files: dmg/*.dmg
+            slug: macos-x86_64
+          - name: Windows x86_64 (msi + exe)
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: msi,nsis
+            files: msi/*.msi nsis/*.exe
+            slug: windows-x86_64
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -35,9 +66,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.target }}
 
       - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
@@ -49,159 +81,24 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Unsigned / unnotarized on purpose. To sign later, set the APPLE_*
+      # secrets (macOS) or a certificate secret (Windows); Tauri's bundler
+      # picks them up from the env.
       - name: Build Tauri app
-        run: npm run tauri build -- --target x86_64-unknown-linux-gnu --bundles appimage,deb
+        run: npm run tauri build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
+      # An unmatched glob stays literal, so cp fails the step if a bundle is missing.
       - name: Collect artifacts
         run: |
           mkdir -p dist-release
-          cp src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage dist-release/Monolog-linux-x86_64.AppImage
-          cp src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb dist-release/Monolog-linux-x86_64.deb
-
-      - name: Validate artifacts
-        run: |
-          test -f dist-release/Monolog-linux-x86_64.AppImage || { echo "::error::AppImage missing"; exit 1; }
-          test -f dist-release/Monolog-linux-x86_64.deb || { echo "::error::deb missing"; exit 1; }
+          cd src-tauri/target/${{ matrix.target }}/release/bundle
+          for f in ${{ matrix.files }}; do
+            cp "$f" "$GITHUB_WORKSPACE/dist-release/Monolog-${{ matrix.slug }}.${f##*.}"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-x86_64
-          path: dist-release/*
-          if-no-files-found: error
-
-  # ------------------------------------------------------------ macOS ARM64
-  build-macos-arm64:
-    name: macOS ARM64 (dmg)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      # Unsigned / unnotarized on purpose. To add signing later, set the
-      # APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY
-      # (and for notarization APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID)
-      # secrets — Tauri's bundler picks them up automatically from the env.
-      - name: Build Tauri app
-        run: npm run tauri build -- --target aarch64-apple-darwin --bundles dmg
-
-      - name: Collect artifacts
-        run: |
-          mkdir -p dist-release
-          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg dist-release/Monolog-macos-arm64.dmg
-
-      - name: Validate artifacts
-        run: |
-          test -f dist-release/Monolog-macos-arm64.dmg || { echo "::error::dmg missing"; exit 1; }
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-arm64
-          path: dist-release/*
-          if-no-files-found: error
-
-  # ------------------------------------------------------------- macOS Intel
-  build-macos-intel:
-    name: macOS Intel (dmg)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      # Cross-compiles the x86_64 target; the runner architecture does not
-      # decide the bundle architecture — the Rust target above does.
-      - name: Build Tauri app
-        run: npm run tauri build -- --target x86_64-apple-darwin --bundles dmg
-
-      - name: Collect artifacts
-        run: |
-          mkdir -p dist-release
-          cp src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg dist-release/Monolog-macos-x86_64.dmg
-
-      - name: Validate artifacts
-        run: |
-          test -f dist-release/Monolog-macos-x86_64.dmg || { echo "::error::dmg missing"; exit 1; }
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-x86_64
-          path: dist-release/*
-          if-no-files-found: error
-
-  # ----------------------------------------------------------------- Windows
-  build-windows:
-    name: Windows x86_64 (msi + exe)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      # Unsigned on purpose. To add signing later, configure a certificate
-      # secret and pass it to Tauri's Windows signing settings.
-      - name: Build Tauri app
-        shell: bash
-        run: npm run tauri build -- --target x86_64-pc-windows-msvc --bundles msi,nsis
-
-      - name: Collect artifacts
-        shell: bash
-        run: |
-          mkdir -p dist-release
-          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi dist-release/Monolog-windows-x86_64.msi
-          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe dist-release/Monolog-windows-x86_64.exe
-
-      - name: Validate artifacts
-        shell: bash
-        run: |
-          test -f dist-release/Monolog-windows-x86_64.msi || { echo "::error::msi missing"; exit 1; }
-          test -f dist-release/Monolog-windows-x86_64.exe || { echo "::error::exe missing"; exit 1; }
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-x86_64
+          name: ${{ matrix.slug }}
           path: dist-release/*
           if-no-files-found: error
 
@@ -209,11 +106,7 @@ jobs:
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs:
-      - build-linux
-      - build-macos-arm64
-      - build-macos-intel
-      - build-windows
+    needs: build
     permissions:
       contents: write # create the release and upload assets
 
