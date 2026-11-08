@@ -7,7 +7,7 @@ import {
   stripImages,
   type ImageInfo,
 } from "@/lib/images";
-import type { Note } from "@/types/note";
+import type { Note, RemoteNote } from "@/types/note";
 
 function pageToNote(page: any): Note {
   const props = page.properties ?? {};
@@ -57,13 +57,20 @@ function noteProperties(note: {
   };
 }
 
+/**
+ * Notion rounds last_edited_time down to the minute, so an edit made in the
+ * same minute as a sync leaves it unchanged. Bodies are re-read until the
+ * page's minute (plus clock-skew margin) is safely older than the last sync.
+ */
+const NOTION_TIME_SLOP_MS = 2 * 60_000;
+
 /** Fetch all non-trashed notes from the data source. */
 export async function fetchNotes(
   dataSourceId: string,
-  /** pageId -> last synced ISO time; pages edited after it get their body re-read. */
+  /** pageId -> local time its body was last pushed or read; see NOTION_TIME_SLOP_MS. */
   knownSynced?: Map<string, string | null>,
-): Promise<Note[]> {
-  const notes: Note[] = [];
+): Promise<RemoteNote[]> {
+  const notes: RemoteNote[] = [];
   let cursor: string | undefined;
   do {
     const res: any = await notionRequest("POST", `/data_sources/${dataSourceId}/query`, {
@@ -72,22 +79,31 @@ export async function fetchNotes(
     });
     for (const page of res?.results ?? []) {
       if (page.archived || page.in_trash) continue;
-      const note = pageToNote(page);
+      const note: RemoteNote = pageToNote(page);
       const syncedAt = knownSynced?.get(page.id);
       const pageEditedTime = page.last_edited_time
         ? new Date(page.last_edited_time).getTime()
         : 0;
       const syncedTime = syncedAt ? new Date(syncedAt).getTime() : 0;
-      const editedExternally = !syncedAt || pageEditedTime > syncedTime;
+      const maybeEdited = !syncedAt || pageEditedTime > syncedTime - NOTION_TIME_SLOP_MS;
 
-      if (editedExternally) {
+      // `content: undefined` keeps the local body: the Content property is
+      // only a truncated, image-less preview.
+      const keepLocal = () => {
+        note.content = undefined;
+        note.last_synced_at = syncedAt!;
+      };
+      if (!maybeEdited) {
+        keepLocal();
+      } else {
         try {
           const body = await fetchPageContent(page.id);
-          if (body && body.trim().length > 0) {
-            note.content = body;
-          }
+          if (body.trim()) note.content = body;
+          note.last_synced_at = new Date().toISOString();
         } catch (e) {
-          console.debug("[notion] failed to read page body, using property fallback", e);
+          console.debug("[notion] failed to read page body", e);
+          // Known page: retry next pass. New page: the preview beats nothing.
+          if (syncedAt) keepLocal();
         }
       }
       notes.push(note);

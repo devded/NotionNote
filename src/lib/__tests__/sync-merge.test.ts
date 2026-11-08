@@ -59,11 +59,13 @@ describe("mergeRemoteAndLocal", () => {
       localNotes: [{ ...local, notion_page_id: "p1" }],
       pushResults: new Map([["n1", pushInfo("T", "C")]]),
       pendingDeleteIds: [],
+      now: Date.parse("2026-01-02T00:00:45Z"),
     });
     // Local note is matched to the remote entry via page id.
     const m = merged.find((n) => n.id === "p1" || n.id === "n1")!;
     expect(m.sync_status).toBe("synced");
-    expect(m.last_synced_at).toBe("2026-01-02T00:00:00Z");
+    // Local push-completion time, not Notion's minute-rounded edit time.
+    expect(m.last_synced_at).toBe("2026-01-02T00:00:45.000Z");
     expect(hasMorePending).toBe(false);
   });
 
@@ -133,11 +135,13 @@ describe("mergeRemoteAndLocal", () => {
       localNotes: [local],
       pushResults: new Map([["brand-new", pushInfo("hello", "", "fresh-page")]]),
       pendingDeleteIds: [],
+      now: Date.parse("2026-01-02T00:00:45Z"),
     });
     const m = merged[0];
     expect(m.notion_page_id).toBe("fresh-page");
     expect(m.sync_status).toBe("synced");
-    expect(m.last_synced_at).toBe("2026-01-02T00:00:00Z");
+    // Local push-completion time, not Notion's minute-rounded edit time.
+    expect(m.last_synced_at).toBe("2026-01-02T00:00:45.000Z");
   });
 
   it("sorts newest updated first", () => {
@@ -186,5 +190,27 @@ describe("notes deleted in Notion", () => {
       now,
     });
     expect(merged.map((n) => n.id)).toEqual(["edited"]);
+  });
+
+  it("applies a remote body edit to a synced note", () => {
+    const local = makeNote({ id: "p1", notion_page_id: "p1", content: "old", sync_status: "synced" });
+    const { merged } = mergeRemoteAndLocal({
+      remote: [makeNote({ id: "p1", notion_page_id: "p1", content: "edited in Notion" })],
+      localNotes: [local],
+      pushResults: new Map(),
+      pendingDeleteIds: [],
+    });
+    expect(merged[0].content).toBe("edited in Notion");
+  });
+
+  it("keeps local blank lines when the remote body matches apart from them", () => {
+    const local = makeNote({ id: "p1", notion_page_id: "p1", content: "a\n\nb", sync_status: "synced" });
+    const { merged } = mergeRemoteAndLocal({
+      remote: [makeNote({ id: "p1", notion_page_id: "p1", content: "a\nb" })],
+      localNotes: [local],
+      pushResults: new Map(),
+      pendingDeleteIds: [],
+    });
+    expect(merged[0].content).toBe("a\n\nb");
   });
 });

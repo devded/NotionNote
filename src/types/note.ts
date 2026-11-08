@@ -14,6 +14,10 @@ export interface Note {
   last_synced_at: string | null;
 }
 
+/** A note as read from Notion. `content` is absent when the page body was not
+ *  re-read because it hasn't changed; the local copy is kept then. */
+export type RemoteNote = Omit<Note, "content"> & { content?: string };
+
 export interface PersistedNotes {
   version: 1;
   notes: Note[];

@@ -1,4 +1,5 @@
-import type { Note } from "@/types/note";
+import type { Note, RemoteNote } from "@/types/note";
+import { normalizeForCompare } from "@/services/notion/notes";
 
 /**
  * Pure merge engine extracted from the NotesProvider sync loop so it can be
@@ -17,7 +18,7 @@ export interface PushResult {
 
 export interface MergeInput {
   /** Freshly fetched notes from Notion (already excludes trashed pages). */
-  remote: Note[];
+  remote: RemoteNote[];
   /** Current local notes (freshest at time of merge). */
   localNotes: Note[];
   /** note.id -> push outcome for pushes made during this sync cycle. */
@@ -79,7 +80,7 @@ export function mergeRemoteAndLocal(input: MergeInput): MergeOutput {
 
     if (!local) {
       // Newly created on Notion.
-      add(r);
+      add({ ...r, content: r.content ?? "" });
       continue;
     }
 
@@ -97,7 +98,9 @@ export function mergeRemoteAndLocal(input: MergeInput): MergeOutput {
           ...local,
           notion_page_id: pageId,
           sync_status: "synced",
-          last_synced_at: pushInfo.lastEditedTime,
+          // Local clock, not Notion's minute-rounded time: fetchNotes uses
+          // it to tell whether a later remote edit could have been missed.
+          last_synced_at: new Date(now).toISOString(),
           updated_at: pushInfo.lastEditedTime,
         });
       }
@@ -107,11 +110,15 @@ export function mergeRemoteAndLocal(input: MergeInput): MergeOutput {
       hasMorePending = true;
       add(local);
     } else {
-      // Local was synced; remote is authoritative.
+      // Local was synced; remote is authoritative. Notion drops blank lines,
+      // so a body that only differs by them keeps the local formatting.
+      const sameText =
+        r.content === undefined ||
+        normalizeForCompare(r.content) === normalizeForCompare(local.content);
       add({
         ...local,
         ...r,
-        content: r.content ?? local.content,
+        content: sameText ? local.content : r.content!,
         sync_status: "synced",
       });
     }
@@ -131,7 +138,7 @@ export function mergeRemoteAndLocal(input: MergeInput): MergeOutput {
           ...local,
           notion_page_id: pushInfo.pageId ?? local.notion_page_id,
           sync_status: userTypedDuringPush ? "pending" : "synced",
-          last_synced_at: pushInfo.lastEditedTime,
+          last_synced_at: new Date(now).toISOString(),
           updated_at: pushInfo.lastEditedTime,
         }, true);
       } else if (
