@@ -54,7 +54,7 @@ export function Sidebar({ searchRef, onOpenSettings }: SidebarProps) {
             ref={searchRef}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            placeholder="Search notes…"
+            placeholder="Search…"
             aria-label="Search notes"
             className="h-8 pl-8 text-sm"
           />
