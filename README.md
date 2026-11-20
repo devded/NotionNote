@@ -12,8 +12,8 @@ They sync to a Notion database in the background.
 - Images: paste, drag & drop, resize by dragging; synced as Notion image blocks
 - Notes show up in Notion as real pages (headings, lists, quotes, images)
 - Instant local search
-- Light / dark / system theme
-- Shortcuts: `Ctrl/Cmd + N` new note · `S` save · `F` search · `W` close
+- Light / dark / system theme, plus Paper (after MiaoYan) and other palettes
+- Shortcuts: `Ctrl/Cmd + N` new note · `S` save · `F` search · `\` toggle sidebar · `W` close
 
 ## Getting started
 

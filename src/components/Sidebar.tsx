@@ -1,19 +1,22 @@
 import { useDeferredValue, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Plus, Search, Settings } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { dateGroup } from "@/lib/format";
+import { dateGroup, formatShort, snippet } from "@/lib/format";
 import { stripImages } from "@/lib/images";
 import { useNotes } from "@/store/notes";
-import { NoteStatusIcon } from "./SyncStatus";
+import { NoteStatusIcon, SyncButton } from "./SyncStatus";
 import type { Note } from "@/types/note";
 
 interface SidebarProps {
   searchRef: React.RefObject<HTMLInputElement | null>;
+  onOpenSettings: () => void;
 }
 
-export function Sidebar({ searchRef }: SidebarProps) {
-  const { notes, select, selectedId } = useNotes();
+export function Sidebar({ searchRef, onOpenSettings }: SidebarProps) {
+  const { notes, select, selectedId, createNote } = useNotes();
 
   // Typing stays instant; React filters with the deferred value in the background.
   const [inputValue, setInputValue] = useState("");
@@ -44,8 +47,8 @@ export function Sidebar({ searchRef }: SidebarProps) {
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-sidebar text-sidebar-foreground">
-      <div className="p-3 pb-2">
-        <div className="relative" role="search">
+      <div className="flex items-center gap-1 p-3 pb-2">
+        <div className="relative min-w-0 flex-1" role="search">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchRef}
@@ -56,6 +59,23 @@ export function Sidebar({ searchRef }: SidebarProps) {
             className="h-8 pl-8 text-sm"
           />
         </div>
+        <SyncButton />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="New note" className="text-muted-foreground" onClick={() => createNote()}>
+              <Plus className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">New note (⌘N)</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Settings" className="text-muted-foreground" onClick={onOpenSettings}>
+              <Settings className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Settings</TooltipContent>
+        </Tooltip>
       </div>
 
       <Separator />
@@ -97,15 +117,21 @@ function NoteItem({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const preview = useMemo(() => snippet(stripImages(note.content)), [note.content]);
   return (
     <button
       onClick={onSelect}
-      className={`flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors ${
+      aria-current={selected || undefined}
+      className={`flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left transition-colors ${
         selected ? "bg-accent text-accent-foreground" : "hover:bg-muted/60"
       }`}
     >
-      <span className="min-w-0 flex-1 truncate">{note.title.trim() || "Untitled"}</span>
-      <NoteStatusIcon status={note.sync_status} />
+      <span className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{note.title.trim() || "Untitled"}</span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">{formatShort(note.updated_at)}</span>
+        <NoteStatusIcon status={note.sync_status} />
+      </span>
+      {preview && <span className="truncate text-xs text-muted-foreground">{preview}</span>}
     </button>
   );
 }

@@ -2,6 +2,24 @@
    palettes: Nord, Dracula, Gruvbox, Catppuccin, Solarized). Each sets a few
    base tokens; the shared block below derives the rest. `html.` beats `.dark`. */
 
+/* Paper: warm paper and ink with a green accent, after MiaoYan (tw93/MiaoYan,
+   Helpers/Theme.swift + DownView.bundle/css/theme-*.css). */
+html.paper {
+  --background: #fdfcf9; --foreground: #363433; --surface: #f7f5ef; --mass: #e8e6dc;
+  --muted-foreground: #6b6a64; --primary: #1c5d33; --primary-foreground: #fdfcf9; --border: #e8e6dc;
+  --editor-text: #403e3c; --code-bg: #f5f4ed; --quote-bar: #ddd9cd;
+}
+html.paper-dark {
+  --background: #1e1d1b; --foreground: #f2f0ea; --surface: #1a1917; --mass: #302f2d;
+  --muted-foreground: #b5b1a7; --primary: #54c59f; --primary-foreground: #1e1d1b; --border: #3a3936;
+  --editor-text: #d5d4d6; --code-bg: #282724; --quote-bar: #4a4843;
+}
+html:is(.paper, .paper-dark) .note-md { color: var(--editor-text); letter-spacing: 0.02em; line-height: 1.7; }
+html:is(.paper, .paper-dark) .note-md .cm-md-link { text-decoration: none; }
+html:is(.paper, .paper-dark) .note-md .cm-md-quote { border-left-color: var(--quote-bar); }
+html:is(.paper, .paper-dark) .note-md :is(.cm-md-code, .cm-md-codeblock) { background: var(--code-bg); }
+html:is(.paper, .paper-dark) .note-md .cm-md-code { font-family: inherit; }
+
 html.nord {
   --background: #2e3440; --foreground: #eceff4; --surface: #3b4252; --mass: #434c5e;
   --muted-foreground: #a3adc2; --primary: #88c0d0; --primary-foreground: #2e3440; --border: #4c566a;
@@ -23,7 +41,7 @@ html.solarized {
   --muted-foreground: #657b83; --primary: #268bd2; --primary-foreground: #fdf6e3; --border: #ddd6c1;
 }
 
-html:is(.nord, .dracula, .gruvbox, .catppuccin, .solarized) {
+html:is(.paper, .paper-dark, .nord, .dracula, .gruvbox, .catppuccin, .solarized) {
   --card: var(--surface);
   --card-foreground: var(--foreground);
   --popover: var(--surface);

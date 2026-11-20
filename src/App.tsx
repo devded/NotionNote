@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Settings } from "lucide-react";
+import { PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -12,7 +12,6 @@ import { NoteEditor } from "@/components/NoteEditor";
 import { DeleteNoteDialog } from "@/components/DeleteNoteDialog";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { Onboarding } from "@/components/Onboarding";
-import { SyncButton } from "@/components/SyncStatus";
 import { useNotes } from "@/store/notes";
 import { useShortcuts } from "@/hooks/useShortcuts";
 import type { Note } from "@/types/note";
@@ -25,6 +24,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Note | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(264);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const toggleSidebar = () => setSidebarOpen((o) => !o);
   const draggingRef = useRef(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
@@ -35,7 +36,11 @@ export default function App() {
       store.flushSave();
       void store.syncNow();
     },
-    focusSearch: () => searchRef.current?.focus(),
+    focusSearch: () => {
+      setSidebarOpen(true);
+      requestAnimationFrame(() => searchRef.current?.focus());
+    },
+    toggleSidebar,
   });
 
   const onDragMove = useCallback((e: MouseEvent) => {
@@ -69,37 +74,11 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-        <header className="flex h-11 shrink-0 items-center justify-between border-b px-3">
-          <div className="flex items-center gap-2">
-            <img src="/monolog-logo.svg" alt="Monolog" className="size-4.5 rounded" />
-            <span className="text-xs font-semibold tracking-wide text-foreground uppercase">
-              Monolog
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <SyncButton />
-            <Button variant="ghost" size="sm" onClick={() => store.createNote()}>
-              + New Note
-            </Button>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-muted-foreground"
-                  onClick={() => setShowSettings(true)}
-                >
-                  <Settings className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Settings</TooltipContent>
-            </Tooltip>
-          </div>
-        </header>
-
         <div className="flex min-h-0 flex-1">
+          {/* Hidden, not unmounted, so the search text and scroll position survive. */}
+          <div className={sidebarOpen ? "contents" : "hidden"}>
           <div style={{ width: sidebarWidth }} className="h-full shrink-0">
-          <Sidebar searchRef={searchRef} />
+            <Sidebar searchRef={searchRef} onOpenSettings={() => setShowSettings(true)} />
           </div>
 
           <div
@@ -131,8 +110,26 @@ export default function App() {
             aria-valuenow={sidebarWidth}
             tabIndex={0}
           />
+          </div>
 
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <main className="group/main relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+                  aria-pressed={sidebarOpen}
+                  onClick={toggleSidebar}
+                  className={`absolute top-2 left-2 z-10 text-muted-foreground transition-opacity focus-visible:opacity-100 ${
+                    sidebarOpen ? "opacity-0 group-hover/main:opacity-100" : ""
+                  }`}
+                >
+                  <PanelLeft className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{sidebarOpen ? "Hide sidebar" : "Show sidebar"} (Ctrl+\)</TooltipContent>
+            </Tooltip>
             <NoteEditor
               key={selected?.id ?? "none"}
               note={selected}

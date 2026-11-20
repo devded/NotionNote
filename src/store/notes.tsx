@@ -85,8 +85,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [online, setOnline] = useState(navigator.onLine);
   const [globalSync, setGlobalSync] = useState<GlobalSyncState>("idle");
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
-  const [theme, setThemeState] = useState<ThemeMode>("system");
   const configRef = useRef(config);
+  // Unknown themes (e.g. the removed "kami" and "herdr") fall back to "system".
+  const theme: ThemeMode = isTheme(config.theme) ? config.theme : "system";
   const syncDelaySec = config.sync_delay_sec ?? DEFAULT_SYNC_DELAY_SEC;
 
   // Mutable mirror so the sync engine always sees fresh data.
@@ -296,10 +297,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const cfg = (await invoke("load_config")) as AppConfig;
         setConfig({ ...cfg });
         configRef.current = { ...cfg };
-        // Unknown themes (e.g. the removed "kami") fall back to "system".
-        const savedTheme = isTheme(cfg.theme) ? cfg.theme : "system";
-        setThemeState(savedTheme);
-        applyTheme(savedTheme);
         const saved = parsePersistedNotes(await invoke("load_notes"));
         applyPersisted({
           version: 1,
@@ -467,6 +464,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     };
   }, [persistNow]);
 
+  /** Update config in state and on disk (theme included, it lives in config). */
+  const saveConfig = useCallback(async (next: AppConfig) => {
+    configRef.current = next;
+    setConfig(next);
+    await invoke("save_config", { config: next });
+  }, []);
+
   const connect = useCallback(
     async (apiKey: string, dbName: string) => {
       // Verify before storing: a mistyped key must never replace a working one.
@@ -483,9 +487,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         data_source_id: result.dataSourceId,
         connected: true,
       };
-      setConfig(next);
-      configRef.current = { ...next };
-      await invoke("save_config", { config: { ...next, theme } });
+      await saveConfig(next);
       // First pull from Notion. Unsynced local notes (pending, errored or
       // never pushed) win over their remote copy; synced ones are replaced.
       const remote = await fetchNotes(result.dataSourceId);
@@ -502,7 +504,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setSelectedId((cur) => cur ?? merged[0]?.id ?? null);
       return { existed: result.existed };
     },
-    [applyPersisted, persistNow, theme],
+    [applyPersisted, persistNow, saveConfig],
   );
 
   const clearCache = useCallback(async () => {
@@ -528,31 +530,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         database_id: result.databaseId,
         data_source_id: result.dataSourceId,
       };
-      setConfig(next);
-      configRef.current = { ...next };
-      await invoke("save_config", { config: { ...next, theme } });
+      await saveConfig(next);
     }
-  }, [theme]);
+  }, [saveConfig]);
 
   const setTheme = useCallback(
-    (t: ThemeMode) => {
-      setThemeState(t);
-      applyTheme(t);
-      void invoke("save_config", {
-        config: { ...configRef.current, theme: t },
-      }).catch(console.debug);
-    },
-    [],
+    (t: ThemeMode) => void saveConfig({ ...configRef.current, theme: t }).catch(console.debug),
+    [saveConfig],
   );
 
   const setSyncDelay = useCallback(
-    (sec: number) => {
-      const next: AppConfig = { ...configRef.current, sync_delay_sec: sec };
-      setConfig(next);
-      configRef.current = next;
-      void invoke("save_config", { config: { ...next, theme } }).catch(console.debug);
-    },
-    [theme],
+    (sec: number) => void saveConfig({ ...configRef.current, sync_delay_sec: sec }).catch(console.debug),
+    [saveConfig],
   );
 
   const value = useMemo<NotesStore>(

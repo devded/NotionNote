@@ -4,14 +4,13 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MarkdownEditor, type MarkdownEditorHandle } from "@/components/MarkdownEditor";
-import { Separator } from "@/components/ui/separator";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useNotes } from "@/store/notes";
-import { formatRelative } from "@/lib/format";
+import { formatRelative, headingsOf } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { LOCAL_PREFIX, fromSegments, imageLine, localImageUrl, pasteClipboardImage, saveImage, toSegments } from "@/lib/images";
 import type { Note } from "@/types/note";
@@ -54,6 +53,13 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
   );
 
   const segments = useMemo(() => toSegments(content), [content]);
+  const toc = useMemo(
+    () =>
+      segments.flatMap((seg, i) =>
+        seg.kind === "text" ? headingsOf(seg.text).map((h) => ({ ...h, segment: i })) : [],
+      ),
+    [segments],
+  );
   // Latest content for async paste handlers; refs are synced after render.
   const contentRef = useRef(content);
   useEffect(() => {
@@ -190,9 +196,16 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
   }
 
   return (
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col">
+      {toc.length >= 2 && (
+        <TableOfContents
+          items={toc}
+          onJump={(h) => textRefs.current[h.segment]?.scrollToLine(h.line)}
+        />
+      )}
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-      <div className="flex min-h-full flex-1 flex-col">
-        <div className="flex items-center justify-between gap-4 px-8 pt-6">
+      <div className="group/note mx-auto flex min-h-full w-full max-w-[720px] flex-1 flex-col">
+        <div className="flex items-center justify-between gap-4 px-8 pt-10">
           <Input
             value={title}
             placeholder="Untitled"
@@ -203,27 +216,21 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
             }}
             className="note-title h-auto border-none bg-transparent px-0 text-2xl font-semibold md:text-2xl dark:bg-transparent tracking-tight shadow-none focus-visible:ring-0"
           />
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="text-xs text-muted-foreground/75 select-none">
-              Updated {formatRelative(note.updated_at)}
-            </span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-muted-foreground hover:text-destructive"
-                  onClick={() => onDeleteRequest(note)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Delete note</TooltipContent>
-            </Tooltip>
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Delete note"
+                className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/note:opacity-100 hover:text-destructive focus-visible:opacity-100"
+                onClick={() => onDeleteRequest(note)}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Delete note</TooltipContent>
+          </Tooltip>
         </div>
-
-        <Separator className="mx-8 mt-3 w-[calc(100%-4rem)]" />
 
         <div
           className="flex flex-1 flex-col px-8 py-4 cursor-text"
@@ -271,11 +278,48 @@ export function NoteEditor({ note, onDeleteRequest }: NoteEditorProps) {
           )}
         </div>
 
-        <div className="flex items-center justify-end px-8 pt-2 pb-4">
+        <div className="flex items-center justify-between gap-4 px-8 pt-2 pb-4 text-xs text-muted-foreground select-none">
+          <span>Updated {formatRelative(note.updated_at)}</span>
           <EditorStatus note={note} />
         </div>
       </div>
     </div>
+    </div>
+  );
+}
+
+type TocItem = { level: number; text: string; line: number; segment: number };
+
+/** Slim handle at the top right; hover or focus it to list the note's headings. */
+function TableOfContents({ items, onJump }: { items: TocItem[]; onJump: (h: TocItem) => void }) {
+  return (
+    <nav aria-label="Table of contents" className="group/toc absolute top-2 right-3 z-10 flex flex-col items-end">
+      <button
+        type="button"
+        aria-label="Table of contents"
+        className="flex flex-col gap-[5px] rounded-md px-1.5 py-2 text-muted-foreground hover:bg-accent"
+      >
+        {[16, 12, 12, 16].map((w, i) => (
+          <span key={i} style={{ width: w }} className="h-0.5 self-end rounded-full bg-current opacity-50" />
+        ))}
+      </button>
+      <div className="mt-1 hidden max-h-[60vh] w-56 overflow-y-auto rounded-lg border bg-popover p-1.5 shadow-lg group-focus-within/toc:block group-hover/toc:block">
+        {items.map((h) => (
+          <button
+            key={`${h.segment}-${h.line}`}
+            type="button"
+            onClick={(e) => {
+              onJump(h);
+              e.currentTarget.blur(); // close the panel (it stays open while focused)
+            }}
+            style={{ paddingLeft: 8 + (h.level - 1) * 12 }}
+            className="block w-full truncate rounded px-2 py-1 text-left text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {h.text}
+          </button>
+        ))}
+      </div>
+    </nav>
   );
 }
 
@@ -412,5 +456,5 @@ function EditorStatus({ note }: { note: Note }) {
     return savedFlash ? "Saved" : "Saved · syncs shortly";
   }, [online, note.sync_status, globalSync, savedFlash]);
 
-  return <span className="text-xs text-muted-foreground">{label}</span>;
+  return <span>{label}</span>;
 }

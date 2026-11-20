@@ -27,13 +27,10 @@ fn keyring_entry() -> Option<keyring::Entry> {
 
 /// In-memory copy of the key so Notion requests don't hit the OS keychain
 /// (a D-Bus round trip on Linux, possibly an unlock prompt) every time.
-fn key_cache() -> &'static Mutex<Option<String>> {
-    static CACHE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(None))
-}
+static KEY_CACHE: Mutex<Option<String>> = Mutex::new(None);
 
 fn set_cached_key(key: Option<String>) {
-    *key_cache().lock().unwrap_or_else(|e| e.into_inner()) = key;
+    *KEY_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = key;
 }
 
 #[tauri::command]
@@ -63,7 +60,7 @@ fn store_api_key(app: &AppHandle, key: &str) -> Result<(), String> {
 }
 
 fn load_api_key(app: &AppHandle) -> Option<String> {
-    if let Some(key) = key_cache().lock().unwrap_or_else(|e| e.into_inner()).clone() {
+    if let Some(key) = KEY_CACHE.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         return Some(key);
     }
     let key = read_stored_key(app)?;

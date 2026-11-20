@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dateGroup, formatRelative } from "../format";
+import { dateGroup, formatRelative, headingsOf, snippet } from "../format";
 
 describe("formatRelative", () => {
   it('returns "just now" within a minute', () => {
@@ -39,5 +39,26 @@ describe("dateGroup", () => {
 
     const lastNight = new Date(startOfToday.getTime() - 60_000);
     expect(dateGroup(lastNight.toISOString())).toBe("Yesterday");
+  });
+});
+
+describe("snippet", () => {
+  it("drops markdown markers and joins lines", () => {
+    expect(snippet("# Title\n- [x] done task\n> quote with **bold**\n\n1. step")).toBe(
+      "Title done task quote with bold step",
+    );
+  });
+  it("truncates", () => {
+    expect(snippet("a".repeat(200), 10)).toBe("a".repeat(10));
+  });
+});
+
+describe("headingsOf", () => {
+  it("finds h1-h3 with line numbers and skips fenced code", () => {
+    const text = "# One\ntext\n```\n# not a heading\n```\n## Two *em*\n#### too deep";
+    expect(headingsOf(text)).toEqual([
+      { level: 1, text: "One", line: 1 },
+      { level: 2, text: "Two em", line: 6 },
+    ]);
   });
 });
