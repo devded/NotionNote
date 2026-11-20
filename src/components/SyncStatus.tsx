@@ -43,7 +43,7 @@ export function SyncButton() {
       }`}
     />
   );
-  let label = isSyncing ? "Syncing…" : "Sync";
+  let label = isSyncing ? "Syncing…" : "Sync now";
 
   if (!online || globalSync === "offline") {
     icon = <AlertTriangle className="size-3.5 text-amber-600 dark:text-amber-400" />;
@@ -56,20 +56,23 @@ export function SyncButton() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!online || isSyncing}
-          onClick={handleSync}
-          className="h-7 gap-1.5 px-2.5 text-xs font-medium"
-        >
-          {icon}
-          <span>{label}</span>
-        </Button>
+        {/* span keeps the tooltip working while the button is disabled */}
+        <span className="inline-flex">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={label}
+            disabled={!online || isSyncing}
+            onClick={handleSync}
+          >
+            {icon}
+          </Button>
+        </span>
       </TooltipTrigger>
       <TooltipContent side="bottom">
+        {label} ·{" "}
         {lastSyncAt
-          ? `Last synced: ${formatRelative(lastSyncAt)} · Click to sync (⌘R / F5)`
+          ? `Last synced ${formatRelative(lastSyncAt)} (⌘R / F5)`
           : "Sync all notes with Notion (⌘R / F5)"}
       </TooltipContent>
     </Tooltip>

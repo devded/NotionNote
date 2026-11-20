@@ -2,6 +2,8 @@ export const THEME_OPTIONS = [
   { id: "system", label: "System", dark: false },
   { id: "light", label: "Light", dark: false },
   { id: "dark", label: "Dark", dark: true },
+  { id: "paper", label: "Paper", dark: false },
+  { id: "paper-dark", label: "Paper Dark", dark: true },
   { id: "herdr", label: "Herdr (Paper Light)", dark: false },
   { id: "nord", label: "Nord", dark: true },
   { id: "dracula", label: "Dracula", dark: true },

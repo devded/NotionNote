@@ -20,6 +20,8 @@ export interface MarkdownEditorHandle {
   selection(): { from: number; to: number };
   length(): number;
   hasFocus(): boolean;
+  /** Scroll a 1-based line to the top of the nearest scroll container. */
+  scrollToLine(line: number): void;
 }
 
 interface MarkdownEditorProps {
@@ -283,6 +285,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
       },
       length: () => viewRef.current?.state.doc.length ?? 0,
       hasFocus: () => viewRef.current?.hasFocus ?? false,
+      scrollToLine: (line) => {
+        const v = viewRef.current;
+        if (!v) return;
+        const pos = v.state.doc.line(Math.min(Math.max(line, 1), v.state.doc.lines)).from;
+        v.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 24 }) });
+      },
     }));
 
     return <div ref={hostRef} data-segment={segment} className={className} />;

@@ -25,3 +25,38 @@ export function dateGroup(iso: string): string {
   if (d >= new Date(startOfToday.getTime() - 30 * 86400000)) return "Previous 30 days";
   return "Older";
 }
+
+/** Compact list timestamp: time today, weekday this week, else "Oct 3". */
+export function formatShort(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const group = dateGroup(iso);
+  if (group === "Today") return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (group === "Yesterday" || group === "Previous 7 days") return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/** Strip markdown markers from one line: list bullets, checkboxes, headings, quotes, emphasis. */
+const plain = (line: string) =>
+  line
+    .replace(/^\s*(?:[-+*]|\d+\.)\s+(?:\[[ xX]\]\s+)?/, "")
+    .replace(/^#{1,6}\s+|^>\s?/, "")
+    .replace(/[*_`~]/g, "")
+    .trim();
+
+/** One-line plain-text preview of a note body (images already stripped). */
+export function snippet(content: string, max = 120): string {
+  return content.split("\n").map(plain).filter(Boolean).join(" ").slice(0, max);
+}
+
+/** ATX headings (levels 1-3) outside fenced code, with 1-based line numbers. */
+export function headingsOf(text: string): { level: number; text: string; line: number }[] {
+  const out: { level: number; text: string; line: number }[] = [];
+  let fenced = false;
+  text.split("\n").forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) fenced = !fenced;
+    const m = !fenced && /^(#{1,3})\s+(.+)$/.exec(l);
+    if (m) out.push({ level: m[1].length, text: plain(m[2]), line: i + 1 });
+  });
+  return out;
+}

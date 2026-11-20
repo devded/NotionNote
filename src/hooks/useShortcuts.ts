@@ -7,6 +7,7 @@ export function useShortcuts(opts: {
   save: () => void;
   focusSearch: () => void;
   sync: () => void;
+  toggleSidebar: () => void;
 }) {
   const optsRef = useRef(opts);
   useEffect(() => {
@@ -26,6 +27,7 @@ export function useShortcuts(opts: {
                 s: o.save,
                 r: o.sync,
                 f: o.focusSearch,
+                "\\": o.toggleSidebar,
                 w: () => void getCurrentWindow().close(),
               }[e.key.toLowerCase()]
             : undefined;
