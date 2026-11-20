@@ -1,6 +1,6 @@
 [package]
 name = "monolog"
-version = "0.2.5"
+version = "0.2.6"
 description = "Monolog"
 authors = ["Monolog"]
 edition = "2021"
