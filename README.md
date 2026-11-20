@@ -41,7 +41,7 @@ Bump the version in `src-tauri/tauri.conf.json`, then push a matching tag:
 git tag v0.2.4 && git push origin v0.2.4
 ```
 
-GitHub Actions then builds for Linux, macOS (ARM and Intel) and Windows, and publishes a GitHub Release.
+GitHub Actions then builds for Linux, macOS (Apple Silicon) and Windows, and publishes a GitHub Release.
 The macOS and Windows builds are unsigned, so Gatekeeper or SmartScreen will warn on first launch.
 
 ## Security

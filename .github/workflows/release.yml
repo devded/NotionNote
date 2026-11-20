@@ -40,13 +40,6 @@ jobs:
             bundles: dmg
             files: dmg/*.dmg
             slug: macos-arm64
-          # Cross-compiled: the Rust target, not the runner, decides the arch.
-          - name: macOS Intel (dmg)
-            os: macos-latest
-            target: x86_64-apple-darwin
-            bundles: dmg
-            files: dmg/*.dmg
-            slug: macos-x86_64
           - name: Windows x86_64 (msi + exe)
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -148,7 +141,6 @@ jobs:
             Monolog-linux-x86_64.AppImage \
             Monolog-linux-x86_64.deb \
             Monolog-macos-arm64.dmg \
-            Monolog-macos-x86_64.dmg \
             Monolog-windows-x86_64.msi \
             Monolog-windows-x86_64.exe; do
             test -s "$f" || { echo "::error::Missing or empty artifact: $f"; exit 1; }
