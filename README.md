@@ -6,6 +6,19 @@ Built with Tauri 2, React, TypeScript and Tailwind.
 Notes save locally first, so typing is instant and the app works offline.
 They sync to a Notion database in the background.
 
+![Monolog with the note list and editor](docs/screenshots/light.png)
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/paper-dark.png" alt="Paper Dark theme with the table of contents open" /></td>
+    <td><img src="docs/screenshots/focus.png" alt="Focus mode with the sidebar hidden, Paper theme" /></td>
+  </tr>
+  <tr>
+    <td align="center">Paper Dark theme · table of contents</td>
+    <td align="center">Focus mode (<code>Ctrl/Cmd + \</code>) · Paper theme</td>
+  </tr>
+</table>
+
 ## Features
 
 - Local-first notes with background Notion sync and offline support
